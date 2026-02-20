@@ -1,0 +1,4619 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>カードマップ</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/gitbrent/pptxgenjs/dist/pptxgen.bundle.js"></script>
+  <style>
+    body {
+      font-family: 'Hiragino Kaku Gothic Pro', 'Meiryo', sans-serif;
+      background-color: #f5fff9;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    
+    .workspace-container {
+      flex: 1;
+      overflow: auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      padding: 5px;
+      position: relative;
+    }
+    .workspace-container .workspace-viewport {
+      flex: 1;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 0;
+    }
+    
+    .workspace {
+      position: relative;
+      overflow: hidden;
+      background-color: white;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+      border-radius: 8px;
+    }
+    
+    .workspace-board {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      transform-origin: 0 0;
+      background-color: inherit;
+      background-size: inherit;
+      background-position: inherit;
+      background-repeat: inherit;
+      transition: background 0.3s;
+      background-size: cover;
+      background-position: center;
+      background-repeat: no-repeat;
+    }
+    
+    .card {
+      position: absolute;
+      background-color: #e6f7e9;
+      border-radius: 6px;
+      padding: 8px;
+      min-width: 40px;
+      min-height: 40px;
+      max-width: 320px;
+      container-type: inline-size;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+      cursor: move;
+      user-select: none;
+      transition: box-shadow 0.2s, background-color 0.3s;
+      z-index: 1;
+      touch-action: none;
+    }
+    /* カード幅に合わせてテキストを縮小（収まりきるように） */
+    @container (min-width: 1px) {
+      .card .card-content { font-size: min(calc(1rem + 5pt), calc(8cqw + 5pt)); }
+      .card .card-content.text-xs { font-size: min(calc(0.75rem + 5pt), calc(6cqw + 5pt)); }
+      .card .card-content.text-sm { font-size: min(calc(0.875rem + 5pt), calc(7cqw + 5pt)); }
+      .card .card-content.text-md { font-size: min(calc(1rem + 5pt), calc(8cqw + 5pt)); }
+      .card .card-content.text-lg { font-size: min(calc(1.25rem + 5pt), calc(10cqw + 5pt)); }
+      .card .card-content.text-xl { font-size: min(calc(1.5rem + 5pt), calc(11cqw + 5pt)); }
+      .card .card-content.text-2xl { font-size: min(calc(1.75rem + 5pt), calc(12cqw + 5pt)); }
+      .card .card-content.text-3xl { font-size: min(calc(2rem + 5pt), calc(14cqw + 5pt)); }
+      .card .card-content.text-4xl { font-size: min(calc(2.5rem + 5pt), calc(16cqw + 5pt)); }
+    }
+    
+    .card.dragging {
+      box-shadow: 0 8px 16px rgba(0, 0, 0, 0.12);
+      z-index: 100;
+    }
+    
+    .card.connecting {
+      box-shadow: 0 0 0 3px #4caf50;
+    }
+    
+    /* 落下：自然落下（等加速度・linearで t^2 の動き） */
+    @keyframes card-drop-in-fall {
+      0% { top: -220px; transform: translateX(0); }
+      11.11% { top: calc(-220px + (232px + var(--final-top)) * 0.01); transform: translateX(0); }
+      22.22% { top: calc(-220px + (232px + var(--final-top)) * 0.04); transform: translateX(0); }
+      33.33% { top: calc(-220px + (232px + var(--final-top)) * 0.09); transform: translateX(0); }
+      44.44% { top: calc(-220px + (232px + var(--final-top)) * 0.16); transform: translateX(0); }
+      55.55% { top: calc(-220px + (232px + var(--final-top)) * 0.25); transform: translateX(0); }
+      66.66% { top: calc(-220px + (232px + var(--final-top)) * 0.36); transform: translateX(0); }
+      77.77% { top: calc(-220px + (232px + var(--final-top)) * 0.49); transform: translateX(0); }
+      88.88% { top: calc(-220px + (232px + var(--final-top)) * 0.64); transform: translateX(0); }
+      100% { top: calc(-220px + (232px + var(--final-top)) * 0.81); transform: translateX(0); }
+    }
+    
+    /* バウンド：ポヨンとやわらかく（ease-out） */
+    @keyframes card-drop-in-bounce {
+      0% { top: calc(-220px + (232px + var(--final-top)) * 0.81); transform: translateX(0); }
+      5.5% { top: calc(var(--final-top) + 10px); transform: translateX(3px); }
+      20% { top: calc(var(--final-top) - 28px); transform: translateX(6px); }
+      38% { top: calc(var(--final-top) + 4px); transform: translateX(-4px); }
+      52% { top: calc(var(--final-top) - 4px); transform: translateX(-6px); }
+      72%, 100% { top: var(--final-top); transform: translateX(-6px); }
+    }
+    
+    .card.card-drop-in {
+      animation:
+        card-drop-in-fall 0.55s linear forwards,
+        card-drop-in-bounce 1.05s 0.55s ease-out forwards;
+    }
+    
+    /* 選択中のフローティング＋回転系のふらつき */
+    @keyframes card-selected-float {
+      0%, 100% {
+        transform: translateY(-2px) rotate(0deg);
+        box-shadow: 0 0 0 3px #2e7d32, 0 6px 20px rgba(46, 125, 50, 0.25), 0 12px 28px rgba(0, 0, 0, 0.12);
+      }
+      25% {
+        transform: translateY(-2px) rotate(1deg);
+        box-shadow: 0 0 0 3px #2e7d32, 0 6px 20px rgba(46, 125, 50, 0.25), 0 12px 28px rgba(0, 0, 0, 0.12);
+      }
+      50% {
+        transform: translateY(-2px) rotate(-0.8deg);
+        box-shadow: 0 0 0 3px #2e7d32, 0 6px 20px rgba(46, 125, 50, 0.25), 0 12px 28px rgba(0, 0, 0, 0.12);
+      }
+      75% {
+        transform: translateY(-2px) rotate(0.65deg);
+        box-shadow: 0 0 0 3px #2e7d32, 0 6px 20px rgba(46, 125, 50, 0.25), 0 12px 28px rgba(0, 0, 0, 0.12);
+      }
+    }
+    
+    .card.selected {
+      z-index: 50;
+      animation: card-selected-float 3s ease-in-out infinite;
+      box-shadow: 0 0 0 3px #2e7d32, 0 6px 20px rgba(46, 125, 50, 0.25), 0 12px 28px rgba(0, 0, 0, 0.12);
+    }
+    
+    .card.selected.dragging {
+      animation: none;
+      transform: none;
+      box-shadow: 0 8px 16px rgba(0, 0, 0, 0.12);
+    }
+    
+    .card-content {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      word-break: break-word;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      white-space: pre-wrap;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+    
+    .card-content[contenteditable="true"] {
+      cursor: text;
+      outline: none;
+    }
+    
+    .card-content[contenteditable="true"]:focus {
+      outline: none;
+    }
+    
+    .delete-btn {
+      position: absolute;
+      top: -8px;
+      right: -8px;
+      width: 24px;
+      height: 24px;
+      background-color: #e53935;
+      color: white;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity 0.2s;
+      z-index: 2;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+    
+    .card.selected .delete-btn {
+      opacity: 1;
+    }
+    
+    .resize-handle {
+      position: absolute;
+      bottom: 0;
+      right: 0;
+      width: 16px;
+      height: 16px;
+      cursor: nwse-resize;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23388e3c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='22 12 18 12 22 8 18 8'%3E%3C/polyline%3E%3Cpolyline points='12 22 12 18 8 22 8 18'%3E%3C/polyline%3E%3Cpath d='M12 2v16M2 12h16'%3E%3C/path%3E%3C/svg%3E");
+      background-size: 10px 10px;
+      background-position: bottom right;
+      background-repeat: no-repeat;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    .card:hover .resize-handle,
+    .card.selected .resize-handle {
+      opacity: 1;
+    }
+    
+    .card-controls {
+      position: absolute;
+      top: -30px;
+      left: 50%;
+      transform: translateX(-50%);
+      background-color: rgba(0, 0, 0, 0.7);
+      border-radius: 4px;
+      padding: 3px;
+      display: flex;
+      gap: 2px;
+      opacity: 0;
+      transition: opacity 0.2s;
+      z-index: 3;
+    }
+    
+    .card.selected .card-controls {
+      opacity: 1;
+    }
+    
+    .card-control-btn {
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      width: 28px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background-color: rgba(255, 255, 255, 0.2);
+      color: white;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    
+    .card-control-btn:hover {
+      background-color: rgba(255, 255, 255, 0.3);
+    }
+    
+    .card-control-btn.active {
+      background-color: rgba(255, 255, 255, 0.5);
+    }
+    
+    .color-picker-btn {
+      position: relative;
+    }
+    
+    .color-picker-btn .color-indicator {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 1px solid rgba(255, 255, 255, 0.5);
+    }
+    
+    .color-picker-panel {
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      margin-top: 5px;
+      background-color: white;
+      border-radius: 8px;
+      padding: 8px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+      display: none;
+      z-index: 1000;
+      width: 160px;
+    }
+    
+    .color-picker-panel.active {
+      display: block;
+    }
+    
+    .color-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 5px;
+    }
+    
+    .color-option-card {
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      width: 30px;
+      height: 30px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: transform 0.2s;
+      border: 1px solid rgba(0, 0, 0, 0.1);
+    }
+    
+    .color-option-card:hover {
+      transform: scale(1.1);
+    }
+    
+    /* モバイル用 - 選択時のみ削除ボタン・リサイズハンドル表示 */
+    @media (max-width: 768px) {
+      .card.selected .delete-btn,
+      .card.selected .resize-handle {
+        opacity: 1;
+      }
+    }
+    
+    .connection-line {
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      position: absolute;
+      height: 2px;
+      padding: 6px 0;
+      margin: -6px 0;
+      box-sizing: content-box;
+      background-color: #4caf50;
+      background-clip: content-box;
+      transform-origin: left center;
+      z-index: 0;
+      cursor: pointer;
+      border-radius: 2px;
+    }
+    
+    .connection-line:hover {
+      background-color: #388e3c;
+    }
+    
+    .drawing-canvas-wrapper {
+      aspect-ratio: 1;
+      width: 100%;
+      /* 正方形を維持：幅のみ制限し高さは aspect-ratio で一致させる */
+      max-width: min(320px, 50vh, 85vw);
+      min-width: 160px;
+      min-height: 160px;
+      flex-shrink: 0;
+    }
+    #drawing-canvas {
+      border: 1px solid #ddd;
+      background-color: white;
+      border-radius: 8px;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+    }
+    
+    /* 接続元を選んだあと、他カードにポインター */
+    .workspace.connecting-from .card {
+      cursor: pointer;
+    }
+    
+    /* ページスライド用ビューポート */
+    .workspace-viewport {
+      position: relative;
+      width: 100%;
+      overflow: hidden;
+      border-radius: 8px;
+    }
+    .workspace-viewport .workspace {
+      transition: transform 0.35s ease-out;
+    }
+    .workspace-ghost {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 0;
+      background-size: contain;
+      background-position: center;
+      background-repeat: no-repeat;
+      background-color: white;
+      border-radius: 8px;
+    }
+    .workspace-viewport .workspace-container-inner {
+      position: relative;
+      z-index: 1;
+    }
+    
+    /* ナビ中央・シンキングツールのみ右寄せ（フィールド右端と揃える） */
+    .page-nav {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      flex-wrap: nowrap;
+      margin-bottom: 0.5em;
+      padding: 0.4em 5px;
+      overflow-x: auto;
+      flex-shrink: 0;
+      -webkit-overflow-scrolling: touch;
+      position: relative;
+      z-index: 100;
+      pointer-events: auto;
+    }
+    .page-nav-spacer {
+      flex: 1;
+      min-width: 0;
+    }
+    .page-nav-center {
+      flex: 0 0 auto;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 0.5em;
+      flex-wrap: nowrap;
+      flex-shrink: 0;
+    }
+    .page-nav .thinking-tool-dropdown-wrap {
+      position: relative;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      justify-content: center;
+      gap: 2px;
+      flex-shrink: 0;
+      z-index: 50;
+      min-width: 0;
+    }
+    .thinking-tool-nav-label {
+      font-size: 10px;
+      font-weight: 600;
+      color: #333;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .thinking-tool-trigger {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 6px;
+      background: rgba(255, 255, 255, 0.95);
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      cursor: pointer;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      font-size: 10px;
+      color: #333;
+      min-width: 0;
+      max-width: 100px;
+    }
+    .thinking-tool-trigger:hover {
+      background: #fff;
+      border-color: #4caf50;
+      box-shadow: 0 1px 6px rgba(0,0,0,0.1);
+    }
+    .thinking-tool-trigger-thumb {
+      width: 24px;
+      height: 18px;
+      border-radius: 2px;
+      background-size: cover;
+      background-position: center;
+      background-color: #f5f5f5;
+      flex-shrink: 0;
+    }
+    .thinking-tool-trigger-label {
+      flex: 1;
+      text-align: left;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .thinking-tool-trigger::after {
+      content: '';
+      width: 0;
+      height: 0;
+      border-left: 3px solid transparent;
+      border-right: 3px solid transparent;
+      border-top: 3px solid #666;
+      flex-shrink: 0;
+    }
+    .thinking-tool-menu {
+      position: fixed;
+      z-index: 2000;
+      margin-top: 4px;
+      background: #fff;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.15);
+      padding: 10px;
+      max-height: 70vh;
+      overflow-y: auto;
+      min-width: 280px;
+    }
+    .thinking-tool-menu[hidden] {
+      display: none !important;
+    }
+    .thinking-tool-menu.is-open {
+      display: block !important;
+    }
+    .thinking-tool-menu-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+    .thinking-tool-menu-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 6px;
+      border-radius: 6px;
+      cursor: pointer;
+      border: 2px solid transparent;
+      background: #f9f9f9;
+    }
+    .thinking-tool-menu-item:hover {
+      background: #e8f5e9;
+      border-color: #4caf50;
+    }
+    .thinking-tool-menu-item-thumb {
+      width: 100%;
+      aspect-ratio: 100/75;
+      border-radius: 4px;
+      background-size: cover;
+      background-position: center;
+      background-color: #fff;
+      margin-bottom: 4px;
+    }
+    .thinking-tool-menu-item-label {
+      font-size: 10px;
+      color: #333;
+      text-align: center;
+      line-height: 1.2;
+      word-break: break-all;
+    }
+    
+    .page-nav .page-info {
+      font-size: clamp(11px, 2vw, 13px);
+      font-weight: 600;
+      color: #2e7d32;
+      background: #e8f5e9;
+      padding: 0.35em 0.65em;
+      border-radius: 6px;
+      flex-shrink: 0;
+      border: 1px solid #a5d6a7;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+    }
+    .page-nav .btn-page {
+      padding: 0.4em 0.75em;
+      font-size: clamp(11px, 2vw, 13px);
+      font-weight: 600;
+      border-radius: 6px;
+      border: 1px solid rgba(0,0,0,0.08);
+      white-space: nowrap;
+      flex-shrink: 0;
+      cursor: pointer;
+      transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .page-nav .btn-page:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+    }
+    .page-nav .btn-page:active {
+      transform: translateY(0);
+    }
+    .page-nav .btn-page:disabled,
+    .page-nav .btn-page.btn-page-inactive {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+    .page-nav .btn-page#page-prev { background: #e3f2fd; color: #1565c0; border-color: #90caf9; }
+    .page-nav .btn-page#page-next { background: #e3f2fd; color: #1565c0; border-color: #90caf9; }
+    .page-nav .btn-page#json-save { background: #ffe0b2; color: #e65100; border-color: #ffcc80; }
+    .page-nav .btn-page#json-load { background: #e3f2fd; color: #1565c0; border-color: #90caf9; }
+    
+    .toolbar {
+      background-color: #2e7d32;
+      color: white;
+      padding: 10px;
+      border-radius: 8px 8px 0 0;
+    }
+    
+    .btn,
+    button {
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+    
+    .btn {
+      transition: all 0.2s;
+    }
+    
+    .btn:hover {
+      transform: translateY(-2px);
+    }
+    
+    .btn:active {
+      transform: translateY(0);
+    }
+    
+    .btn-active {
+      background-color: #1b5e20 !important;
+    }
+    
+    /* モード表示 - ワークスペース外に移動（横幅に合わせて縮小） */
+    .status-bar {
+      background-color: #f0f0f0;
+      border-top: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 0.4em 0.65em;
+      display: flex;
+      flex-wrap: nowrap;
+      justify-content: flex-start;
+      align-items: center;
+      gap: 0.75em 1.25em;
+      font-size: clamp(9px, 2.2vw, 13px);
+      color: #333;
+      min-width: 0;
+    }
+    
+    .status-bar > * {
+      flex-shrink: 0;
+    }
+    
+    .status-bar .btn {
+      padding: 0.35em 0.65em;
+      font-size: 1em;
+    }
+    
+    .mode-indicator {
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 0.35em;
+      white-space: nowrap;
+    }
+    
+    .mode-indicator-dot {
+      width: 0.6em;
+      height: 0.6em;
+      min-width: 6px;
+      min-height: 6px;
+      border-radius: 50%;
+      background-color: #4caf50;
+    }
+    
+    .app-container {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      max-height: 100vh;
+      overflow: hidden;
+      container-type: inline-size;
+      container-name: app;
+    }
+    
+    .main-content {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+    
+    .bottom-panel {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      /* タブと「閉じる」が入る幅に縮小 */
+      width: max-content;
+      min-width: 240px;
+      max-width: min(400px, 92vw);
+      z-index: 10;
+      background-color: rgba(56, 142, 60, 0.92);
+      backdrop-filter: blur(6px);
+      border-radius: 12px;
+      box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.12);
+      transition: background-color 0.3s ease, box-shadow 0.3s ease, transform 0.3s ease;
+      overflow: hidden;
+    }
+    /* 折り畳み時：パステルグリーンのすりガラス効果＋フロート風（浮遊時の陰で存在がわかる） */
+    .bottom-panel.collapsed {
+      background-color: rgba(180, 220, 180, 0.25);
+      backdrop-filter: blur(6px) saturate(150%);
+      -webkit-backdrop-filter: blur(6px) saturate(150%);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25), 0 16px 48px rgba(0, 0, 0, 0.15), 0 24px 64px rgba(0, 0, 0, 0.1);
+      animation: panel-float 4s ease-in-out infinite;
+    }
+    @keyframes panel-float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-6px); }
+    }
+    .bottom-panel-drag-handle {
+      cursor: grab;
+      user-select: none;
+    }
+    .bottom-panel-drag-handle:active {
+      cursor: grabbing;
+    }
+    
+    .bottom-panel-content {
+      max-height: 80vh;
+      overflow-y: auto;
+      overflow-x: hidden;
+      transition: max-height 0.3s ease, opacity 0.2s ease;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .bottom-panel-content .input-panels {
+      width: 100%;
+      max-width: 320px;
+      margin: 0 auto;
+    }
+    
+    .bottom-panel.collapsed .bottom-panel-content {
+      max-height: 0;
+      padding: 0;
+      margin: 0;
+      opacity: 0;
+    }
+    
+    .bottom-panel.collapsed .panel-toggle-btn-expand {
+      display: inline-flex;
+    }
+    
+    .bottom-panel.collapsed .panel-toggle-btn-collapse {
+      display: none;
+    }
+    
+    .bottom-panel .panel-toggle-btn-expand {
+      display: none;
+    }
+    
+    .bottom-panel:not(.collapsed) .panel-toggle-btn-collapse {
+      display: inline-flex;
+    }
+    
+    .bottom-panel.collapsed .input-tabs {
+      display: none;
+    }
+    
+    .bottom-panel.collapsed .flex.items-center.justify-between {
+      justify-content: center;
+    }
+    
+    .panel-toggle-btn {
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      padding: 6px 12px;
+      font-size: 13px;
+      border-radius: 8px;
+      white-space: nowrap;
+    }
+    /* 折り畳み時の「入力パネルを開く」ボタン：はっきり見えるように */
+    .bottom-panel.collapsed .panel-toggle-btn {
+      background-color: rgba(255, 255, 255, 0.95) !important;
+      color: #1b5e20 !important;
+      font-weight: 600;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2), 0 4px 12px rgba(0, 0, 0, 0.1);
+      border: 2px solid rgba(255, 255, 255, 0.9);
+    }
+    .bottom-panel.collapsed .panel-toggle-btn:hover {
+      background-color: rgba(255, 255, 255, 1) !important;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25), 0 6px 16px rgba(0, 0, 0, 0.15);
+      transform: translateY(-1px);
+    }
+    
+    .default-preview-section {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+    .default-preview-label {
+      margin: 0;
+      font-size: 12px;
+      color: #37474f;
+      text-align: center;
+    }
+    .default-preview-card-wrap {
+      position: relative;
+      min-width: 120px;
+      min-height: 120px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .default-preview-card-wrap .card {
+      position: relative;
+      margin: 0;
+      flex-shrink: 0;
+    }
+    .default-preview-card-wrap .resize-handle {
+      opacity: 1;
+    }
+    
+    .input-tabs {
+      display: flex;
+      flex-direction: row;
+      background-color: #2e7d32;
+      border-radius: 8px;
+      writing-mode: horizontal-tb;
+      flex-wrap: nowrap;
+    }
+    
+    .input-tab {
+      padding: 6px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      color: rgba(255, 255, 255, 0.8);
+      border-bottom: 2px solid transparent;
+      writing-mode: horizontal-tb;
+      white-space: nowrap;
+    }
+    
+    .input-tab.active {
+      color: white;
+      border-bottom: 2px solid white;
+    }
+    
+    .input-panels {
+      min-height: 200px;
+    }
+    
+    .input-panel {
+      display: none;
+      min-height: 200px;
+    }
+    
+    .input-panel.active {
+      display: flex;
+      flex-direction: column;
+      min-height: 200px;
+    }
+    
+    /* 出力・背景設定パネル内ボタン：緑背景で視認性を確保 */
+    #output-panel .btn,
+    #settings-panel .btn {
+      background-color: #ffffff !important;
+      color: #1b5e20 !important;
+      border: 1px solid rgba(255, 255, 255, 0.6);
+      font-weight: 500;
+    }
+    #output-panel .btn:hover,
+    #settings-panel .btn:hover {
+      background-color: #e8f5e9 !important;
+      border-color: rgba(255, 255, 255, 0.9);
+      color: #0d3d0f !important;
+    }
+    /* パネル内のボタン：白背景＋濃い枠でパネル背景と明確に区別 */
+    .panel-inner .btn {
+      background-color: #ffffff !important;
+      color: #1b5e20 !important;
+      border: 2px solid #2e7d32 !important;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+    }
+    .panel-inner .btn:hover {
+      background-color: #e8f5e9 !important;
+      border-color: #1b5e20 !important;
+      color: #0d3d0f !important;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+    }
+    #settings-panel #remove-bg-image {
+      background-color: #c62828 !important;
+      color: #fff !important;
+      border-color: #b71c1c !important;
+    }
+    #settings-panel #remove-bg-image:hover {
+      background-color: #b71c1c !important;
+      border-color: #8e0e0e !important;
+    }
+    
+    /* 出力・背景設定パネル：内側のパネル風エリア（背景＋中央揃え） */
+    .panel-inner {
+      background-color: #e8f0e9;
+      border-radius: 8px;
+      padding: 16px;
+      margin-top: 4px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.8);
+    }
+    .output-panel-inner {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+    }
+    .output-panel-inner .hint-text {
+      color: #455a64;
+      margin-bottom: 0;
+    }
+    .settings-panel-inner {
+      display: block;
+    }
+    .settings-panel-inner .settings-subpanel {
+      max-width: 100%;
+      margin: 0 auto;
+    }
+    .settings-panel-inner .settings-section {
+      text-align: center;
+    }
+    .settings-panel-inner .settings-section > * {
+      justify-content: center;
+    }
+    .settings-panel-inner .flex.flex-wrap {
+      justify-content: center;
+    }
+    .settings-panel-inner .flex.flex-col {
+      align-items: center;
+    }
+    .settings-panel-inner .template-grid {
+      justify-content: center;
+      margin: 0 auto;
+    }
+    .settings-panel-inner .hint-text {
+      color: #455a64;
+    }
+    .settings-panel-inner .settings-section {
+      border-bottom-color: rgba(0, 0, 0, 0.1);
+    }
+    .settings-panel-inner .settings-title {
+      color: #37474f;
+    }
+    /* パネル内の背景色ボタン：枠でパネル背景と区別し、選択時は強調 */
+    .settings-panel-inner .color-option {
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      border: 2px solid rgba(0, 0, 0, 0.28);
+      box-sizing: border-box;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+    }
+    .settings-panel-inner .color-option:hover {
+      border-color: rgba(0, 0, 0, 0.5);
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+    }
+    .settings-panel-inner .color-option.active {
+      border: 3px solid #1b5e20;
+      box-shadow: 0 0 0 2px #e8f0e9, 0 2px 4px rgba(0, 0, 0, 0.2);
+    }
+    .bg-color-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 8px;
+      justify-items: center;
+      max-width: 100%;
+    }
+    
+    /* 背景設定パネル内のサブタブ */
+    .settings-tabs {
+      display: flex;
+      background-color: rgba(0, 0, 0, 0.2);
+      border-radius: 8px;
+      padding: 2px;
+      margin-bottom: 10px;
+    }
+    
+    .settings-tab {
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      flex: 1;
+      padding: 6px 10px;
+      cursor: pointer;
+      color: rgba(255, 255, 255, 0.85);
+      border-radius: 6px;
+      font-size: 13px;
+      text-align: center;
+      transition: background 0.2s, color 0.2s;
+    }
+    
+    .settings-tab:hover {
+      color: white;
+      background-color: rgba(255, 255, 255, 0.1);
+    }
+    
+    .settings-tab.active {
+      color: white;
+      background-color: rgba(255, 255, 255, 0.25);
+    }
+    
+    .settings-subpanel {
+      display: none;
+    }
+    
+    .settings-subpanel.active {
+      display: block;
+    }
+    
+    .hint-text {
+      color: rgba(255, 255, 255, 0.9);
+      font-size: 12px;
+      margin-top: 4px;
+    }
+    
+    /* テキストサイズクラス */
+    .text-xs {
+      font-size: 0.75rem;
+    }
+    
+    .text-sm {
+      font-size: 0.875rem;
+    }
+    
+    .text-md {
+      font-size: 1rem;
+    }
+    
+    .text-lg {
+      font-size: 1.25rem;
+    }
+    
+    .text-xl {
+      font-size: 1.5rem;
+    }
+    
+    .text-2xl {
+      font-size: 1.75rem;
+    }
+    
+    .text-3xl {
+      font-size: 2rem;
+    }
+    
+    .text-4xl {
+      font-size: 2.5rem;
+    }
+    
+    .color-option {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      cursor: pointer;
+      transition: transform 0.2s;
+    }
+    
+    .color-option:hover {
+      transform: scale(1.2);
+    }
+    
+    .color-option.active {
+      border: 2px solid #fff;
+      box-shadow: 0 0 0 2px #2e7d32;
+    }
+    
+    .next-card-color-option {
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      cursor: pointer;
+      border: 2px solid transparent;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    .next-card-color-option:hover {
+      transform: scale(1.1);
+    }
+    .next-card-color-option.active {
+      border-color: rgba(255,255,255,0.9);
+      box-shadow: 0 0 0 2px #2e7d32;
+    }
+    /* カードの色を均等に2段配置（8列×2行）。ホバー時にはみ出さないよう幅とオーバーフローを調整 */
+    #text-panel-card-colors,
+    #drawing-panel-card-colors {
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      gap: 6px;
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+      overflow: hidden;
+      padding: 2px 0;
+      box-sizing: border-box;
+    }
+    /* 円形に（楕円にならないよう幅高さを同じに） */
+    #text-panel-card-colors .next-card-color-option,
+    #drawing-panel-card-colors .next-card-color-option {
+      width: 20px;
+      height: 20px;
+      min-width: 20px;
+      min-height: 20px;
+      max-width: 20px;
+      max-height: 20px;
+      justify-self: center;
+      box-sizing: border-box;
+    }
+    
+    /* ズームコントロール - ワークスペース外に移動 */
+    .zoom-controls {
+      display: flex;
+      align-items: center;
+      gap: 0.3em;
+      white-space: nowrap;
+    }
+    
+    .zoom-btn {
+      width: 1.6em;
+      height: 1.6em;
+      min-width: 20px;
+      min-height: 20px;
+      background-color: #e0e0e0;
+      color: #333;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 1.1em;
+      font-weight: bold;
+      border: 1px solid #ccc;
+    }
+    
+    .zoom-btn:hover {
+      background-color: #d0d0d0;
+    }
+    
+    .zoom-level {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #333;
+      font-size: 1em;
+      padding: 0 0.4em;
+      min-width: 3em;
+      text-align: center;
+    }
+    
+    /* 横幅が狭いときはパネルをさらに縮小 */
+    @container app (max-width: 380px) {
+      .status-bar { font-size: 8px; }
+    }
+    @container app (max-width: 320px) {
+      .status-bar { font-size: 7px; }
+    }
+    
+    /* シンキングツールの背景 */
+    .template-option {
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      width: 100px;
+      height: 75px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s;
+      background-size: cover;
+      background-position: center;
+      border: 2px solid #ddd;
+      position: relative;
+      overflow: hidden;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+    }
+    
+    .template-option:hover {
+      transform: scale(1.05);
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+    }
+    
+    .template-option.active {
+      border: 3px solid #4caf50;
+      box-shadow: 0 0 0 2px #fff;
+    }
+    
+    .template-label {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background-color: rgba(0, 0, 0, 0.8);
+      color: white;
+      font-size: 12px;
+      padding: 4px;
+      text-align: center;
+      font-weight: 500;
+    }
+    
+    /* シンキングツール背景 - 黒系に変更 */
+    .bg-fishbone {
+      background-image: url("data:image/svg+xml,%3Csvg width='100%25' height='100%25' xmlns='http://www.w3.org/2000/svg'%3E%3Cline x1='0' y1='50%25' x2='100%25' y2='50%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='2' /%3E%3Cline x1='20%25' y1='30%25' x2='30%25' y2='50%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1' /%3E%3Cline x1='20%25' y1='70%25' x2='30%25' y2='50%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1' /%3E%3Cline x1='40%25' y1='30%25' x2='50%25' y2='50%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1' /%3E%3Cline x1='40%25' y1='70%25' x2='50%25' y2='50%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1' /%3E%3Cline x1='60%25' y1='30%25' x2='70%25' y2='50%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1' /%3E%3Cline x1='60%25' y1='70%25' x2='70%25' y2='50%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1' /%3E%3Ctext x='85%25' y='50%25' font-family='Arial' font-size='14' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3E結果%3C/text%3E%3Ctext x='20%25' y='25%25' font-family='Arial' font-size='14' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3E要因1%3C/text%3E%3Ctext x='40%25' y='25%25' font-family='Arial' font-size='14' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3E要因2%3C/text%3E%3Ctext x='60%25' y='25%25' font-family='Arial' font-size='14' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3E要因3%3C/text%3E%3Ctext x='20%25' y='75%25' font-family='Arial' font-size='14' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3E要因4%3C/text%3E%3Ctext x='40%25' y='75%25' font-family='Arial' font-size='14' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3E要因5%3C/text%3E%3Ctext x='60%25' y='75%25' font-family='Arial' font-size='14' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3E要因6%3C/text%3E%3C/svg%3E") !important;
+    }
+    
+    .bg-quadrant {
+      background-image: url("data:image/svg+xml,%3Csvg width='100%25' height='100%25' xmlns='http://www.w3.org/2000/svg'%3E%3Cline x1='50%25' y1='0' x2='50%25' y2='100%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='2' /%3E%3Cline x1='0' y1='50%25' x2='100%25' y2='50%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='2' /%3E%3C/svg%3E") !important;
+    }
+    
+    .bg-jellyfish {
+      background-image: url("data:image/svg+xml,%3Csvg width='100%25' height='100%25' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='50%25' cy='30%25' r='15%25' fill='rgba(50, 50, 50, 0.1)' stroke='rgba(50, 50, 50, 0.6)' stroke-width='2' /%3E%3Ctext x='50%25' y='30%25' font-family='Arial' font-size='16' font-weight='bold' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3E中心テーマ%3C/text%3E%3Cline x1='40%25' y1='45%25' x2='25%25' y2='65%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1' /%3E%3Ccircle cx='25%25' cy='70%25' r='8%25' fill='rgba(50, 50, 50, 0.1)' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1' /%3E%3Ctext x='25%25' y='70%25' font-family='Arial' font-size='14' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3Eサブテーマ1%3C/text%3E%3Cline x1='50%25' y1='45%25' x2='50%25' y2='65%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1' /%3E%3Ccircle cx='50%25' cy='70%25' r='8%25' fill='rgba(50, 50, 50, 0.1)' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1' /%3E%3Ctext x='50%25' y='70%25' font-family='Arial' font-size='14' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3Eサブテーマ2%3C/text%3E%3Cline x1='60%25' y1='45%25' x2='75%25' y2='65%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1' /%3E%3Ccircle cx='75%25' cy='70%25' r='8%25' fill='rgba(50, 50, 50, 0.1)' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1' /%3E%3Ctext x='75%25' y='70%25' font-family='Arial' font-size='14' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3Eサブテーマ3%3C/text%3E%3C/svg%3E") !important;
+    }
+    
+    .bg-venn {
+      background-image: url("data:image/svg+xml,%3Csvg width='100%25' height='100%25' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='35%25' cy='50%25' r='30%25' fill='rgba(50, 50, 50, 0.1)' stroke='rgba(50, 50, 50, 0.6)' stroke-width='2' /%3E%3Ccircle cx='65%25' cy='50%25' r='30%25' fill='rgba(70, 70, 70, 0.1)' stroke='rgba(70, 70, 70, 0.6)' stroke-width='2' /%3E%3C/svg%3E") !important;
+    }
+    
+    .bg-ychart {
+      background-image: url("data:image/svg+xml,%3Csvg width='100%25' height='100%25' xmlns='http://www.w3.org/2000/svg'%3E%3Cline x1='0' y1='0' x2='50%25' y2='65%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='2' /%3E%3Cline x1='100%25' y1='0' x2='50%25' y2='65%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='2' /%3E%3Cline x1='50%25' y1='65%25' x2='50%25' y2='100%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='2' /%3E%3C/svg%3E") !important;
+    }
+    
+    .bg-mindmap {
+      background-image: url("data:image/svg+xml,%3Csvg width='100%25' height='100%25' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='50%25' cy='50%25' r='12%25' fill='rgba(50, 50, 50, 0.1)' stroke='rgba(50, 50, 50, 0.6)' stroke-width='2' /%3E%3Ctext x='50%25' y='50%25' font-family='Arial' font-size='14' font-weight='bold' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3E中心%3C/text%3E%3Cline x1='50%25' y1='38%25' x2='30%25' y2='25%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1.5' /%3E%3Ccircle cx='30%25' cy='25%25' r='8%25' fill='rgba(50, 50, 50, 0.1)' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1' /%3E%3Cline x1='50%25' y1='38%25' x2='70%25' y2='25%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1.5' /%3E%3Ccircle cx='70%25' cy='25%25' r='8%25' fill='rgba(50, 50, 50, 0.1)' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1' /%3E%3Cline x1='50%25' y1='62%25' x2='30%25' y2='75%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1.5' /%3E%3Ccircle cx='30%25' cy='75%25' r='8%25' fill='rgba(50, 50, 50, 0.1)' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1' /%3E%3Cline x1='50%25' y1='62%25' x2='70%25' y2='75%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1.5' /%3E%3Ccircle cx='70%25' cy='75%25' r='8%25' fill='rgba(50, 50, 50, 0.1)' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1' /%3E%3Cline x1='38%25' y1='50%25' x2='20%25' y2='50%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1.5' /%3E%3Ccircle cx='20%25' cy='50%25' r='8%25' fill='rgba(50, 50, 50, 0.1)' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1' /%3E%3Cline x1='62%25' y1='50%25' x2='80%25' y2='50%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1.5' /%3E%3Ccircle cx='80%25' cy='50%25' r='8%25' fill='rgba(50, 50, 50, 0.1)' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1' /%3E%3C/svg%3E") !important;
+    }
+    
+    .bg-flowchart {
+      background-image: url("data:image/svg+xml,%3Csvg width='100%25' height='100%25' xmlns='http://www.w3.org/2000/svg'%3E%3Cdefs%3E%3Cmarker id='arrowhead' markerWidth='10' markerHeight='10' refX='9' refY='3' orient='auto'%3E%3Cpolygon points='0 0, 10 3, 0 6' fill='rgba(50, 50, 50, 0.6)' /%3E%3C/marker%3E%3C/defs%3E%3Crect x='40%25' y='10%25' width='20%25' height='12%25' fill='rgba(50, 50, 50, 0.1)' stroke='rgba(50, 50, 50, 0.6)' stroke-width='2' rx='3' /%3E%3Cline x1='50%25' y1='22%25' x2='50%25' y2='30%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='2' marker-end='url(%23arrowhead)' /%3E%3Cpolygon points='40%25,30%25 60%25,30%25 50%25,42%25' fill='rgba(50, 50, 50, 0.1)' stroke='rgba(50, 50, 50, 0.6)' stroke-width='2' /%3E%3Cline x1='50%25' y1='42%25' x2='50%25' y2='50%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='2' marker-end='url(%23arrowhead)' /%3E%3Crect x='40%25' y='50%25' width='20%25' height='12%25' fill='rgba(50, 50, 50, 0.1)' stroke='rgba(50, 50, 50, 0.6)' stroke-width='2' rx='3' /%3E%3Cline x1='50%25' y1='62%25' x2='50%25' y2='70%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='2' marker-end='url(%23arrowhead)' /%3E%3Cellipse cx='50%25' cy='78%25' rx='10%25' ry='8%25' fill='rgba(50, 50, 50, 0.1)' stroke='rgba(50, 50, 50, 0.6)' stroke-width='2' /%3E%3C/svg%3E") !important;
+    }
+    
+    .bg-matrix {
+      background-image: url("data:image/svg+xml,%3Csvg width='100%25' height='100%25' xmlns='http://www.w3.org/2000/svg'%3E%3Cline x1='33%25' y1='0' x2='33%25' y2='100%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='2' /%3E%3Cline x1='67%25' y1='0' x2='67%25' y2='100%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='2' /%3E%3Cline x1='0' y1='33%25' x2='100%25' y2='33%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='2' /%3E%3Cline x1='0' y1='67%25' x2='100%25' y2='67%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='2' /%3E%3Ctext x='16%25' y='16%25' font-family='Arial' font-size='12' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3E高/高%3C/text%3E%3Ctext x='50%25' y='16%25' font-family='Arial' font-size='12' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3E高/低%3C/text%3E%3Ctext x='84%25' y='16%25' font-family='Arial' font-size='12' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3E低/高%3C/text%3E%3Ctext x='16%25' y='84%25' font-family='Arial' font-size='12' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3E低/低%3C/text%3E%3C/svg%3E") !important;
+    }
+    
+    .bg-timeline {
+      background-image: url("data:image/svg+xml,%3Csvg width='100%25' height='100%25' xmlns='http://www.w3.org/2000/svg'%3E%3Cline x1='10%25' y1='50%25' x2='90%25' y2='50%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='3' /%3E%3Ccircle cx='20%25' cy='50%25' r='5' fill='rgba(50, 50, 50, 0.6)' /%3E%3Ccircle cx='40%25' cy='50%25' r='5' fill='rgba(50, 50, 50, 0.6)' /%3E%3Ccircle cx='60%25' cy='50%25' r='5' fill='rgba(50, 50, 50, 0.6)' /%3E%3Ccircle cx='80%25' cy='50%25' r='5' fill='rgba(50, 50, 50, 0.6)' /%3E%3Cline x1='20%25' y1='50%25' x2='20%25' y2='30%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1' /%3E%3Cline x1='40%25' y1='50%25' x2='40%25' y2='30%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1' /%3E%3Cline x1='60%25' y1='50%25' x2='60%25' y2='30%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1' /%3E%3Cline x1='80%25' y1='50%25' x2='80%25' y2='30%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1' /%3E%3Ctext x='20%25' y='25%25' font-family='Arial' font-size='12' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3E開始%3C/text%3E%3Ctext x='80%25' y='25%25' font-family='Arial' font-size='12' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3E終了%3C/text%3E%3C/svg%3E") !important;
+    }
+    
+    .bg-pyramid {
+      background-image: url("data:image/svg+xml,%3Csvg width='100%25' height='100%25' xmlns='http://www.w3.org/2000/svg'%3E%3Cpolygon points='50%25,15%25 20%25,40%25 80%25,40%25' fill='rgba(50, 50, 50, 0.1)' stroke='rgba(50, 50, 50, 0.6)' stroke-width='2' /%3E%3Cpolygon points='20%25,40%25 80%25,40%25 70%25,65%25 30%25,65%25' fill='rgba(50, 50, 50, 0.1)' stroke='rgba(50, 50, 50, 0.6)' stroke-width='2' /%3E%3Cpolygon points='30%25,65%25 70%25,65%25 60%25,85%25 40%25,85%25' fill='rgba(50, 50, 50, 0.1)' stroke='rgba(50, 50, 50, 0.6)' stroke-width='2' /%3E%3Cline x1='50%25' y1='15%25' x2='50%25' y2='85%25' stroke='rgba(50, 50, 50, 0.4)' stroke-width='1' stroke-dasharray='2,2' /%3E%3Ctext x='50%25' y='28%25' font-family='Arial' font-size='12' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3E最上位%3C/text%3E%3Ctext x='50%25' y='53%25' font-family='Arial' font-size='12' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3E中間%3C/text%3E%3Ctext x='50%25' y='75%25' font-family='Arial' font-size='12' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3E基礎%3C/text%3E%3C/svg%3E") !important;
+    }
+    
+    .bg-swot {
+      background-image: url("data:image/svg+xml,%3Csvg width='100%25' height='100%25' xmlns='http://www.w3.org/2000/svg'%3E%3Cline x1='50%25' y1='0' x2='50%25' y2='100%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='2' /%3E%3Cline x1='0' y1='50%25' x2='100%25' y2='50%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='2' /%3E%3Ctext x='25%25' y='25%25' font-family='Arial' font-size='14' font-weight='bold' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3ES%3C/text%3E%3Ctext x='25%25' y='40%25' font-family='Arial' font-size='11' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3E強み%3C/text%3E%3Ctext x='75%25' y='25%25' font-family='Arial' font-size='14' font-weight='bold' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3EW%3C/text%3E%3Ctext x='75%25' y='40%25' font-family='Arial' font-size='11' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3E弱み%3C/text%3E%3Ctext x='25%25' y='70%25' font-family='Arial' font-size='14' font-weight='bold' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3EO%3C/text%3E%3Ctext x='25%25' y='85%25' font-family='Arial' font-size='11' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3E機会%3C/text%3E%3Ctext x='75%25' y='70%25' font-family='Arial' font-size='14' font-weight='bold' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3ET%3C/text%3E%3Ctext x='75%25' y='85%25' font-family='Arial' font-size='11' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3E脅威%3C/text%3E%3C/svg%3E") !important;
+    }
+    
+    .bg-5w1h {
+      background-image: url("data:image/svg+xml,%3Csvg width='100%25' height='100%25' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='50%25' cy='50%25' r='15%25' fill='rgba(50, 50, 50, 0.1)' stroke='rgba(50, 50, 50, 0.6)' stroke-width='2' /%3E%3Ctext x='50%25' y='50%25' font-family='Arial' font-size='16' font-weight='bold' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3E何を%3C/text%3E%3Cline x1='50%25' y1='35%25' x2='50%25' y2='20%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1.5' /%3E%3Ccircle cx='50%25' cy='20%25' r='8%25' fill='rgba(50, 50, 50, 0.1)' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1' /%3E%3Ctext x='50%25' y='20%25' font-family='Arial' font-size='12' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3Eなぜ%3C/text%3E%3Cline x1='65%25' y1='50%25' x2='80%25' y2='50%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1.5' /%3E%3Ccircle cx='80%25' cy='50%25' r='8%25' fill='rgba(50, 50, 50, 0.1)' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1' /%3E%3Ctext x='80%25' y='50%25' font-family='Arial' font-size='12' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3Eどこで%3C/text%3E%3Cline x1='50%25' y1='65%25' x2='50%25' y2='80%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1.5' /%3E%3Ccircle cx='50%25' cy='80%25' r='8%25' fill='rgba(50, 50, 50, 0.1)' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1' /%3E%3Ctext x='50%25' y='80%25' font-family='Arial' font-size='12' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3Eいつ%3C/text%3E%3Cline x1='35%25' y1='50%25' x2='20%25' y2='50%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1.5' /%3E%3Ccircle cx='20%25' cy='50%25' r='8%25' fill='rgba(50, 50, 50, 0.1)' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1' /%3E%3Ctext x='20%25' y='50%25' font-family='Arial' font-size='12' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3E誰が%3C/text%3E%3Cline x1='58%25' y1='58%25' x2='70%25' y2='70%25' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1.5' /%3E%3Ccircle cx='70%25' cy='70%25' r='8%25' fill='rgba(50, 50, 50, 0.1)' stroke='rgba(50, 50, 50, 0.6)' stroke-width='1' /%3E%3Ctext x='70%25' y='70%25' font-family='Arial' font-size='12' fill='rgba(50, 50, 50, 0.9)' text-anchor='middle' dominant-baseline='middle'%3Eどのように%3C/text%3E%3C/svg%3E") !important;
+    }
+    
+    /* 画像アップロード関連 */
+    .file-upload {
+      position: relative;
+      overflow: hidden;
+      display: inline-block;
+    }
+    
+    .file-upload input[type=file] {
+      position: absolute;
+      top: 0;
+      right: 0;
+      min-width: 100%;
+      min-height: 100%;
+      font-size: 100px;
+      text-align: right;
+      filter: alpha(opacity=0);
+      opacity: 0;
+      outline: none;
+      background: white;
+      cursor: pointer;
+      display: block;
+    }
+    
+    .settings-section {
+      margin-bottom: 16px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+    }
+    
+    .settings-section:last-child {
+      border-bottom: none;
+      margin-bottom: 0;
+      padding-bottom: 0;
+    }
+    
+    .settings-title {
+      color: white;
+      font-weight: 500;
+      margin-bottom: 8px;
+    }
+    
+    /* テンプレートグリッド */
+    .template-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+      gap: 12px;
+    }
+    
+    /* テンプレートのサムネイル */
+    .template-thumbnail {
+      width: 100%;
+      height: 100%;
+      background-color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    
+    /* キー操作ヘルプ */
+    .key-help {
+      display: flex;
+      align-items: center;
+      gap: 0.3em;
+      color: #666;
+      font-size: 1em;
+      white-space: nowrap;
+    }
+    
+    .key-badge {
+      background-color: #e0e0e0;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      padding: 0.05em 0.25em;
+      font-size: 0.85em;
+      font-family: monospace;
+    }
+    /* デフォルトの付箋設定モーダル */
+    .default-sticky-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      background: rgba(0,0,0,0.45);
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      box-sizing: border-box;
+    }
+    .default-sticky-modal.open {
+      display: flex;
+    }
+    .default-sticky-modal-dialog {
+      background: #fff;
+      border-radius: 12px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+    .page-nav .btn-page#default-sticky-btn {
+      padding: 6px 10px;
+      min-width: 36px;
+      background: #e8f5e9;
+      color: #2e7d32;
+      border-color: #a5d6a7;
+    }
+    .page-nav .btn-page#default-sticky-btn:hover {
+      background: #c8e6c9;
+    }
+    
+    /* 保存範囲選択モーダル */
+    .save-choice-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      background: rgba(0,0,0,0.45);
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      box-sizing: border-box;
+    }
+    .save-choice-modal.open {
+      display: flex;
+    }
+    .load-choice-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      background: rgba(0,0,0,0.45);
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      box-sizing: border-box;
+    }
+    .load-choice-modal.open {
+      display: flex;
+    }
+    .save-choice-dialog {
+      background: #fff;
+      border-radius: 12px;
+      padding: 20px;
+      max-width: 320px;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+    }
+    .save-choice-title {
+      margin: 0;
+      font-size: 1rem;
+      font-weight: 600;
+      color: #333;
+    }
+    .save-choice-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      width: 100%;
+    }
+    .save-choice-btn {
+      padding: 12px 16px;
+      font-size: 14px;
+      border-radius: 8px;
+      border: 1px solid rgba(0,0,0,0.1);
+      background: #fff;
+      color: #e65100;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, box-shadow 0.2s;
+    }
+    .save-choice-btn:hover {
+      background: #ffe0b2;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    }
+    .save-choice-btn:first-of-type { background: #fff3e0; border-color: #ffcc80; }
+    .save-choice-btn:last-of-type { background: #e3f2fd; color: #1565c0; border-color: #90caf9; }
+    .save-choice-btn:last-of-type:hover { background: #bbdefb; }
+
+    /* スクリーンショットプレビュー用モーダル */
+    #screenshot-preview-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      background: rgba(0,0,0,0.5);
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      box-sizing: border-box;
+    }
+    #screenshot-preview-modal.open {
+      display: flex;
+    }
+    .screenshot-preview-dialog {
+      background: #fff;
+      border-radius: 12px;
+      padding: 16px;
+      max-width: 95vw;
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+    }
+    .screenshot-preview-dialog img {
+      max-width: 100%;
+      max-height: 60vh;
+      object-fit: contain;
+      border-radius: 8px;
+      border: 1px solid #ddd;
+    }
+    .screenshot-preview-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+      position: relative;
+    }
+    .screenshot-copy-menu {
+      display: none;
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      margin-top: 4px;
+      background: #fff;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      padding: 4px 0;
+      min-width: 180px;
+      z-index: 10;
+    }
+    .screenshot-copy-menu.open {
+      display: block;
+    }
+    .screenshot-copy-menu button {
+      display: block;
+      width: 100%;
+      padding: 8px 16px;
+      border: none;
+      background: none;
+      text-align: left;
+      font-size: 14px;
+      cursor: pointer;
+      color: #333;
+      font-family: inherit;
+    }
+    .screenshot-copy-menu button:hover {
+      background: #f0f0f0;
+    }
+    .screenshot-copy-menu-hint {
+      padding: 6px 16px;
+      font-size: 11px;
+      color: #888;
+      border-top: 1px solid #eee;
+    }
+    .screenshot-preview-img-hint {
+      font-size: 12px;
+      color: #666;
+      margin-top: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="app-container p-2">
+    <header class="mb-1">
+      <h1 class="text-lg font-bold text-gray-700 text-center">カードマップ</h1>
+    </header>
+    
+    <div class="main-content">
+      <div class="page-nav">
+        <div class="page-nav-spacer" aria-hidden="true"></div>
+        <div class="page-nav-center">
+          <button type="button" id="page-prev" class="btn-page">← 前</button>
+          <span class="page-info" id="page-info">1 / 5</span>
+          <button type="button" id="page-next" class="btn-page">次 →</button>
+          <button type="button" id="json-save" class="btn-page">保存</button>
+          <button type="button" id="json-load" class="btn-page">読み込み</button>
+          <button type="button" id="default-sticky-btn" class="btn-page" title="デフォルトの付箋を設定">⚙</button>
+          <input type="file" id="json-file-input" accept=".json,application/json" style="display:none">
+        </div>
+        <div class="thinking-tool-dropdown-wrap">
+          <span class="thinking-tool-nav-label">シンキングツール</span>
+          <button type="button" class="thinking-tool-trigger" id="thinking-tool-trigger" aria-expanded="false" aria-haspopup="true" title="シンキングツールを選択">
+            <span class="thinking-tool-trigger-thumb" id="thinking-tool-trigger-thumb"></span>
+            <span class="thinking-tool-trigger-label" id="thinking-tool-trigger-label">なし</span>
+          </button>
+          <div class="thinking-tool-menu" id="thinking-tool-menu" hidden>
+            <div class="thinking-tool-menu-grid" id="thinking-tool-menu-grid"></div>
+          </div>
+        </div>
+      </div>
+      <div class="workspace-container mb-1">
+        <div class="workspace-viewport" id="workspace-viewport">
+          <div class="workspace-ghost" id="workspace-ghost"></div>
+          <div class="workspace-container-inner">
+            <div id="workspace" class="workspace">
+              <div id="workspace-board" class="workspace-board"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- モード・ズームパネル（描画フィールドの下） -->
+      <div class="status-bar mb-1 rounded">
+        <div class="mode-indicator">
+          <span class="mode-indicator-dot"></span>
+          <span id="mode-text"></span>
+        </div>
+        <div class="key-help">
+          <span>選択: <span class="key-badge">↑</span><span class="key-badge">↓</span><span class="key-badge">←</span><span class="key-badge">→</span> 移動</span>
+          <span>|</span>
+          <span><span class="key-badge">Delete</span> 削除</span>
+        </div>
+        <div class="zoom-controls">
+          <div id="zoom-out" class="zoom-btn">−</div>
+          <div id="zoom-level" class="zoom-level">100%</div>
+          <div id="zoom-in" class="zoom-btn">＋</div>
+          <div id="zoom-reset" class="zoom-btn">↺</div>
+        </div>
+      </div>
+      
+      <div id="bottom-panel" class="bottom-panel p-2">
+      <div id="panel-drag-handle" class="bottom-panel-drag-handle flex items-center justify-between gap-2 mb-2">
+        <div class="input-tabs mb-0 flex-1 min-w-0">
+          <div class="input-tab active" data-tab="text">テキスト入力</div>
+          <div class="input-tab" data-tab="drawing">手書き入力</div>
+          <div class="input-tab" data-tab="settings">背景設定</div>
+          <div class="input-tab" data-tab="output">出力</div>
+        </div>
+        <button type="button" id="panel-toggle" class="btn panel-toggle-btn bg-white/20 hover:bg-white/30 text-white" title="パネルを閉じる">
+          <span class="panel-toggle-btn-collapse">閉じる</span>
+          <span class="panel-toggle-btn-collapse">▼</span>
+          <span class="panel-toggle-btn-expand">入力パネルを開く</span>
+          <span class="panel-toggle-btn-expand">▲</span>
+        </button>
+      </div>
+      
+      <div class="bottom-panel-content">
+      <div class="input-panels">
+        <!-- テキスト入力パネル -->
+        <div id="text-panel" class="input-panel active">
+          <div class="flex flex-col flex-1 min-h-0">
+            <div class="flex items-center gap-2 flex-shrink-0 mb-1">
+              <span class="hint-text whitespace-nowrap">カードの色</span>
+              <div id="text-panel-card-colors" class="flex flex-wrap gap-1"></div>
+            </div>
+            <textarea id="text-input" class="flex-1 min-h-0 w-full p-3 border rounded-md resize-none" placeholder="テキストを入力してください..."></textarea>
+            <div class="flex items-center justify-between mt-2 gap-2 flex-shrink-0">
+              <div class="hint-text">Enterで追加、Shift+Enterで改行</div>
+              <button id="text-add-btn" class="btn bg-green-600 hover:bg-green-700 text-white px-4 py-1.5 rounded text-sm">
+                追加
+              </button>
+            </div>
+          </div>
+        </div>
+        
+        <!-- 手書き入力パネル -->
+        <div id="drawing-panel" class="input-panel">
+          <div class="flex flex-col flex-1 min-h-0">
+            <div class="flex items-center gap-2 flex-shrink-0 mb-1">
+              <span class="hint-text whitespace-nowrap">カードの色</span>
+              <div id="drawing-panel-card-colors" class="flex flex-wrap gap-1"></div>
+            </div>
+            <div class="flex flex-col gap-2 flex-1 min-h-0 items-stretch">
+              <div class="drawing-canvas-wrapper flex-shrink-0">
+                <canvas id="drawing-canvas" class="w-full h-full"></canvas>
+              </div>
+              <div class="flex gap-2 justify-end items-center flex-shrink-0 py-1">
+                <button id="clear-btn" class="btn bg-gray-600 hover:bg-gray-700 text-white px-3 py-1.5 rounded text-sm whitespace-nowrap">
+                  クリア
+                </button>
+                <button id="drawing-add-btn" class="btn bg-green-600 hover:bg-green-700 text-white px-4 py-1.5 rounded text-sm whitespace-nowrap">
+                  追加
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- 出力パネル -->
+        <div id="output-panel" class="input-panel">
+          <div class="panel-inner output-panel-inner flex flex-col flex-1 min-h-0 justify-center gap-3 items-center text-center">
+            <p class="hint-text">描画フィールドを画像として保存またはコピーします。</p>
+            <div class="flex flex-wrap gap-2 justify-center">
+              <button id="save-png-btn" class="btn bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded text-sm">
+                画像出力
+              </button>
+              <button id="save-pptx-btn" class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm">
+                PowerPoint出力
+              </button>
+            </div>
+            <div class="pptx-scope-choice flex flex-col gap-2 w-full max-w-xs mt-1">
+              <span class="text-xs text-gray-600">PowerPointの出力範囲</span>
+              <div class="flex gap-4 justify-center">
+                <label class="inline-flex items-center gap-1.5 cursor-pointer">
+                  <input type="radio" name="pptx-scope" value="current" checked class="pptx-scope-radio">
+                  <span class="text-sm">現在のページのみ</span>
+                </label>
+                <label class="inline-flex items-center gap-1.5 cursor-pointer">
+                  <input type="radio" name="pptx-scope" value="all" class="pptx-scope-radio">
+                  <span class="text-sm">5枚全て</span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- 背景設定パネル -->
+        <div id="settings-panel" class="input-panel">
+          <div class="flex flex-col flex-1 min-h-0">
+          <div class="settings-tabs flex-shrink-0">
+            <div class="settings-tab active" data-settings-tab="color">背景色</div>
+            <div class="settings-tab" data-settings-tab="image">画像設定</div>
+            <div class="settings-tab" data-settings-tab="thinking">シンキングツール</div>
+          </div>
+          <div class="panel-inner settings-panel-inner flex-1 min-h-0 overflow-y-auto">
+          <!-- 背景色サブパネル -->
+          <div id="settings-color" class="settings-subpanel active">
+            <div class="settings-section">
+              <div class="bg-color-grid">
+                <div class="color-option active" style="background-color: #ffffff;" data-color="#ffffff"></div>
+                <div class="color-option" style="background-color: #fdf2f8;" data-color="#fdf2f8"></div>
+                <div class="color-option" style="background-color: #f5f3ff;" data-color="#f5f3ff"></div>
+                <div class="color-option" style="background-color: #fff7ed;" data-color="#fff7ed"></div>
+                <div class="color-option" style="background-color: #f0fdf4;" data-color="#f0fdf4"></div>
+                <div class="color-option" style="background-color: #eff6ff;" data-color="#eff6ff"></div>
+                <div class="color-option" style="background-color: #fefce8;" data-color="#fefce8"></div>
+                <div class="color-option" style="background-color: #f8fafc;" data-color="#f8fafc"></div>
+                <div class="color-option" style="background-color: #f0fdfa;" data-color="#f0fdfa"></div>
+                <div class="color-option" style="background-color: #fef3f2;" data-color="#fef3f2"></div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- 画像設定サブパネル -->
+          <div id="settings-image" class="settings-subpanel">
+            <div class="settings-section">
+              <div class="flex flex-col gap-2">
+                <div class="file-upload">
+                  <button class="btn bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded">
+                    画像を選択
+                  </button>
+                  <input type="file" id="bg-image-upload" accept="image/*" />
+                </div>
+                <div id="bg-image-preview" class="hidden mt-2">
+                  <div class="flex items-center gap-2">
+                    <div class="w-16 h-16 bg-cover bg-center border rounded" id="preview-thumbnail"></div>
+                    <button id="remove-bg-image" class="btn bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-sm">
+                      削除
+                    </button>
+                  </div>
+                </div>
+                <div class="hint-text">※画像は端末内で処理され、外部に送信されません</div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- シンキングツールサブパネル -->
+          <div id="settings-thinking" class="settings-subpanel">
+            <div class="settings-section">
+              <div class="template-grid">
+                <div class="template-option active" data-template="none">
+                  <div class="template-thumbnail">
+                    <span style="color: #2e7d32; font-weight: 500;">なし</span>
+                  </div>
+                </div>
+                <div class="template-option" data-template="venn2">
+                  <div class="w-full h-full" style="background-image: url('img/venn2.png'); background-size: cover; background-position: center;"></div>
+                  <div class="template-label">ベン図２</div>
+                </div>
+                <div class="template-option" data-template="venn3">
+                  <div class="w-full h-full" style="background-image: url('img/venn3.png'); background-size: cover; background-position: center;"></div>
+                  <div class="template-label">ベン図３</div>
+                </div>
+                <div class="template-option" data-template="coordinate">
+                  <div class="w-full h-full" style="background-image: url('img/coordinate.png'); background-size: cover; background-position: center;"></div>
+                  <div class="template-label">座標軸</div>
+                </div>
+                <div class="template-option" data-template="diamond">
+                  <div class="w-full h-full" style="background-image: url('img/diamond.png'); background-size: cover; background-position: center;"></div>
+                  <div class="template-label">ダイヤモンドランキング</div>
+                </div>
+                <div class="template-option" data-template="data-chart">
+                  <div class="w-full h-full" style="background-image: url('img/data-chart.png'); background-size: cover; background-position: center;"></div>
+                  <div class="template-label">データチャート</div>
+                </div>
+                <div class="template-option" data-template="web6">
+                  <div class="w-full h-full" style="background-image: url('img/web6.png'); background-size: cover; background-position: center;"></div>
+                  <div class="template-label">イメージマップ６</div>
+                </div>
+                <div class="template-option" data-template="web0">
+                  <div class="w-full h-full" style="background-image: url('img/web0.png'); background-size: cover; background-position: center;"></div>
+                  <div class="template-label">イメージマップ０</div>
+                </div>
+                <div class="template-option" data-template="y-chart">
+                  <div class="w-full h-full" style="background-image: url('img/y-chart.png'); background-size: cover; background-position: center;"></div>
+                  <div class="template-label">Yチャート</div>
+                </div>
+                <div class="template-option" data-template="x-chart">
+                  <div class="w-full h-full" style="background-image: url('img/x-chart.png'); background-size: cover; background-position: center;"></div>
+                  <div class="template-label">Xチャート</div>
+                </div>
+                <div class="template-option" data-template="w-chart">
+                  <div class="w-full h-full" style="background-image: url('img/w-chart.png'); background-size: cover; background-position: center;"></div>
+                  <div class="template-label">Wチャート</div>
+                </div>
+                <div class="template-option" data-template="butterfly">
+                  <div class="w-full h-full" style="background-image: url('img/butterfly.png'); background-size: cover; background-position: center;"></div>
+                  <div class="template-label">バタフライチャート１</div>
+                </div>
+                <div class="template-option" data-template="butterfly2">
+                  <div class="w-full h-full" style="background-image: url('img/butterfly2.png'); background-size: cover; background-position: center;"></div>
+                  <div class="template-label">バタフライチャート２</div>
+                </div>
+                <div class="template-option" data-template="fishbone">
+                  <div class="w-full h-full" style="background-image: url('img/fishbone.png'); background-size: cover; background-position: center;"></div>
+                  <div class="template-label">要因特性図（フィッシュボーン）</div>
+                </div>
+                <div class="template-option" data-template="pmi">
+                  <div class="w-full h-full" style="background-image: url('img/pmi.png'); background-size: cover; background-position: center;"></div>
+                  <div class="template-label">PMI図</div>
+                </div>
+                <div class="template-option" data-template="bear">
+                  <div class="w-full h-full" style="background-image: url('img/bear.png'); background-size: cover; background-position: center;"></div>
+                  <div class="template-label">クマ手チャート</div>
+                </div>
+                <div class="template-option" data-template="jellyfish">
+                  <div class="w-full h-full" style="background-image: url('img/jellyfish.png'); background-size: cover; background-position: center;"></div>
+                  <div class="template-label">クラゲチャート</div>
+                </div>
+                <div class="template-option" data-template="tree">
+                  <div class="w-full h-full" style="background-image: url('img/tree.png'); background-size: cover; background-position: center;"></div>
+                  <div class="template-label">ロジックツリー</div>
+                </div>
+                <div class="template-option" data-template="candy">
+                  <div class="w-full h-full" style="background-image: url('img/candy.png'); background-size: cover; background-position: center;"></div>
+                  <div class="template-label">キャンディチャート</div>
+                </div>
+                <div class="template-option" data-template="kwl">
+                  <div class="w-full h-full" style="background-image: url('img/KWL.png'); background-size: cover; background-position: center;"></div>
+                  <div class="template-label">KWL</div>
+                </div>
+                <div class="template-option" data-template="information-analysis-chart">
+                  <div class="w-full h-full" style="background-image: url('img/information-analysis-chart.png'); background-size: cover; background-position: center;"></div>
+                  <div class="template-label">情報分析チャート</div>
+                </div>
+                <div class="template-option" data-template="pyramid">
+                  <div class="w-full h-full" style="background-image: url('img/pyramid.png'); background-size: cover; background-position: center;"></div>
+                  <div class="template-label">ピラミッドチャート</div>
+                </div>
+                <div class="template-option" data-template="mountain">
+                  <div class="w-full h-full" style="background-image: url('img/mountain.png'); background-size: cover; background-position: center;"></div>
+                  <div class="template-label">プロット図</div>
+                </div>
+                <div class="template-option" data-template="target">
+                  <div class="w-full h-full" style="background-image: url('img/target.png'); background-size: cover; background-position: center;"></div>
+                  <div class="template-label">同心円チャート</div>
+                </div>
+                <div class="template-option" data-template="table">
+                  <div class="w-full h-full" style="background-image: url('img/table.png'); background-size: cover; background-position: center;"></div>
+                  <div class="template-label">テーブル</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    </div>
+  </div>
+  
+  <!-- デフォルトの付箋設定モーダル -->
+  <div id="default-sticky-modal" class="default-sticky-modal" aria-hidden="true">
+    <div class="default-sticky-modal-dialog">
+      <p class="default-preview-label">ここで設定した大きさ・文字サイズが次の付箋のデフォルトになります</p>
+      <div id="default-preview-card-wrap" class="default-preview-card-wrap"></div>
+      <button type="button" id="default-sticky-modal-close" class="btn bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded text-sm">閉じる</button>
+    </div>
+  </div>
+  
+  <!-- 保存範囲選択モーダル（保存ボタン押下後に表示） -->
+  <div id="save-choice-modal" aria-hidden="true" class="save-choice-modal">
+    <div class="save-choice-dialog">
+      <p class="save-choice-title">どれを保存しますか？</p>
+      <div class="save-choice-buttons">
+        <button type="button" id="save-choice-current" class="btn save-choice-btn">現在の1枚だけ保存</button>
+        <button type="button" id="save-choice-all" class="btn save-choice-btn">5枚すべて保存</button>
+      </div>
+      <button type="button" id="save-choice-cancel" class="btn bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded text-sm">キャンセル</button>
+    </div>
+  </div>
+  
+  <!-- 読み込み方法選択モーダル（読み込みボタン押下後に表示） -->
+  <div id="load-choice-modal" aria-hidden="true" class="load-choice-modal">
+    <div class="save-choice-dialog">
+      <p class="save-choice-title">どのように読み込みますか？</p>
+      <div class="save-choice-buttons">
+        <button type="button" id="load-choice-append" class="btn save-choice-btn">現在のページに1枚分を追加</button>
+        <button type="button" id="load-choice-replace" class="btn save-choice-btn">新規で5枚のスライドを読み込む</button>
+      </div>
+      <button type="button" id="load-choice-cancel" class="btn bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded text-sm">キャンセル</button>
+    </div>
+  </div>
+  
+  <!-- スクリーンショットプレビュー用モーダル -->
+  <div id="screenshot-preview-modal" aria-hidden="true">
+    <div class="screenshot-preview-dialog">
+      <p class="hint-text mb-0">プレビュー</p>
+      <img id="screenshot-preview-img" src="" alt="スクリーンショットプレビュー" />
+      <p class="screenshot-preview-img-hint">画像を右クリック → 「画像をコピー」でもコピーできます</p>
+      <div class="screenshot-preview-actions">
+        <button type="button" id="screenshot-save-file-btn" class="btn bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded text-sm">画像として保存（PNG）</button>
+        <div style="position: relative;">
+          <button type="button" id="screenshot-copy-clipboard-btn" class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm">クリップボードにコピー</button>
+          <div id="screenshot-copy-menu" class="screenshot-copy-menu">
+            <button type="button" id="screenshot-copy-menu-programmatic">画像をコピー</button>
+            <div class="screenshot-copy-menu-hint">失敗時は画像を右クリック → 「画像をコピー」</div>
+          </div>
+        </div>
+        <button type="button" id="screenshot-preview-close-btn" class="btn bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded text-sm">閉じる</button>
+      </div>
+    </div>
+  </div>
+  
+  <script>
+    // タッチ対応ヘルパー関数：クリックとタッチの両方を処理
+    function addClickOrTouchListener(element, handler, options = {}) {
+      if (!element) return;
+      
+      let touchHandled = false;
+      
+      // タッチイベントハンドラ
+      const touchHandler = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        touchHandled = true;
+        handler(e);
+        // 短い遅延後にリセット（クリックイベントが発火する前に）
+        setTimeout(() => {
+          touchHandled = false;
+        }, 300);
+      };
+      
+      // クリックイベントハンドラ（タッチで処理済みの場合は無視）
+      const clickHandler = (e) => {
+        if (!touchHandled) {
+          handler(e);
+        }
+      };
+      
+      element.addEventListener('click', clickHandler, options);
+      element.addEventListener('touchend', touchHandler, { ...options, passive: false });
+    }
+    
+    // パネル折りたたみ・位置
+    const bottomPanel = document.getElementById('bottom-panel');
+    const panelToggleBtn = document.getElementById('panel-toggle');
+    const panelDragHandle = document.getElementById('panel-drag-handle');
+    const PANEL_POSITION_LEFT_KEY = 'cardmap-panel-left';
+    const PANEL_POSITION_BOTTOM_KEY = 'cardmap-panel-bottom';
+    
+    const mainContent = document.querySelector('.main-content');
+    function getPanelBounds() {
+      const r = mainContent.getBoundingClientRect();
+      const w = bottomPanel.offsetWidth;
+      const h = bottomPanel.offsetHeight;
+      const maxBottom = Math.max(0, (r.height || mainContent.clientHeight) - h);
+      return { minLeft: 0, maxLeft: Math.max(0, r.width - w), maxBottom };
+    }
+    function applyPanelPosition(leftPx, bottomPx) {
+      const b = getPanelBounds();
+      if (leftPx != null) bottomPanel.style.left = Math.round(Math.max(0, Math.min(b.maxLeft, leftPx))) + 'px';
+      if (bottomPx != null) bottomPanel.style.bottom = Math.round(Math.max(0, Math.min(b.maxBottom, bottomPx))) + 'px';
+    }
+    function savePanelPosition() {
+      const left = parseInt(bottomPanel.style.left, 10);
+      const bottom = parseInt(bottomPanel.style.bottom, 10);
+      try {
+        if (!isNaN(left)) localStorage.setItem(PANEL_POSITION_LEFT_KEY, String(left));
+        if (!isNaN(bottom)) localStorage.setItem(PANEL_POSITION_BOTTOM_KEY, String(bottom));
+      } catch (_) {}
+    }
+    const savedLeft = (() => { try { return parseInt(localStorage.getItem(PANEL_POSITION_LEFT_KEY), 10); } catch (_) { return null; } })();
+    const savedBottom = (() => { try { return parseInt(localStorage.getItem(PANEL_POSITION_BOTTOM_KEY), 10); } catch (_) { return null; } })();
+    applyPanelPosition(typeof savedLeft === 'number' && !isNaN(savedLeft) ? savedLeft : 0, typeof savedBottom === 'number' && !isNaN(savedBottom) ? savedBottom : 0);
+    
+    addClickOrTouchListener(panelToggleBtn, (e) => {
+      e.stopPropagation();
+      bottomPanel.classList.toggle('collapsed');
+      panelToggleBtn.title = bottomPanel.classList.contains('collapsed') ? 'パネルを開く' : 'パネルを閉じる';
+      setTimeout(adjustWorkspaceSize, 280);
+    });
+    
+    // パネルをドラッグで移動（タブバー・余白・コンテンツの空き領域から可。ボタン・入力・色選択等は除く）
+    function isPanelDragTarget(el) {
+      if (!el || !bottomPanel.contains(el)) return false;
+      // タブ選択直後はパネルドラッグを無効化
+      if (Date.now() < panelDragDisabledUntil) return false;
+      if (el.id === 'panel-toggle' || (el.closest && el.closest('#panel-toggle'))) return false;
+      if (el.closest && el.closest('input, textarea, button, a, select')) return false;
+      if (el.closest && el.closest('.color-option, .template-option, .settings-tab, .input-tab')) return false;
+      if (el.id === 'drawing-canvas' || (el.closest && el.closest('#drawing-canvas, .drawing-canvas-wrapper'))) return false;
+      return true;
+    }
+    const DRAG_THRESHOLD_PX = 5;
+    let panelDidDrag = false;
+    let panelDragDisabledUntil = 0; // タブ選択直後のパネルドラッグ無効化用
+    
+    function consumePanelDragClick(e) {
+      if (panelDidDrag) {
+        e.preventDefault();
+        e.stopPropagation();
+        panelDidDrag = false;
+        document.removeEventListener('click', consumePanelDragClick, true);
+      }
+    }
+    function startPanelDrag(e) {
+      if (!isPanelDragTarget(e.target)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const startLeft = parseInt(bottomPanel.style.left, 10) || 0;
+      const startBottom = parseInt(bottomPanel.style.bottom, 10) || 0;
+      const { maxLeft, maxBottom } = getPanelBounds();
+      let draggedEnoughToConsumeClick = false;
+      function move(ev) {
+        const dx = ev.clientX - startX;
+        const dy = startY - ev.clientY;
+        if (Math.abs(dx) > DRAG_THRESHOLD_PX || Math.abs(dy) > DRAG_THRESHOLD_PX) draggedEnoughToConsumeClick = true;
+        const newLeft = Math.max(0, Math.min(maxLeft, startLeft + dx));
+        const newBottom = Math.max(0, Math.min(maxBottom, startBottom + dy));
+        applyPanelPosition(newLeft, newBottom);
+      }
+      function stop() {
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', stop);
+        if (draggedEnoughToConsumeClick) {
+          panelDidDrag = true;
+          savePanelPosition();
+          document.addEventListener('click', consumePanelDragClick, true);
+        }
+      }
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', stop);
+    }
+    bottomPanel.addEventListener('mousedown', startPanelDrag, true);
+    bottomPanel.addEventListener('touchstart', (e) => {
+      // キャンバスエリアのタッチは無視
+      if (e.target.id === 'drawing-canvas' || e.target.closest('#drawing-canvas, .drawing-canvas-wrapper')) {
+        return;
+      }
+      if (!isPanelDragTarget(e.target)) return;
+      if (e.touches.length !== 1) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.touches[0].clientX;
+      const startY = e.touches[0].clientY;
+      const startLeft = parseInt(bottomPanel.style.left, 10) || 0;
+      const startBottom = parseInt(bottomPanel.style.bottom, 10) || 0;
+      const { maxLeft, maxBottom } = getPanelBounds();
+      function move(ev) {
+        if (ev.touches.length !== 1) return;
+        const dx = ev.touches[0].clientX - startX;
+        const dy = startY - ev.touches[0].clientY;
+        const newLeft = Math.max(0, Math.min(maxLeft, startLeft + dx));
+        const newBottom = Math.max(0, Math.min(maxBottom, startBottom + dy));
+        applyPanelPosition(newLeft, newBottom);
+      }
+      function stop() {
+        document.removeEventListener('touchmove', move);
+        document.removeEventListener('touchend', stop);
+        savePanelPosition();
+      }
+      document.addEventListener('touchmove', move, { passive: false });
+      document.addEventListener('touchend', stop);
+    }, { passive: false });
+    
+    // タブ切り替え
+    const tabs = document.querySelectorAll('.input-tab');
+    const panels = document.querySelectorAll('.input-panel');
+    
+    tabs.forEach(tab => {
+      addClickOrTouchListener(tab, () => {
+        const targetPanel = tab.dataset.tab;
+        
+        // タブ選択直後はパネルドラッグを一時的に無効化（300ms）
+        panelDragDisabledUntil = Date.now() + 300;
+        
+        // タブの切り替え
+        tabs.forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        
+        // パネルの切り替え
+        panels.forEach(panel => panel.classList.remove('active'));
+        document.getElementById(`${targetPanel}-panel`).classList.add('active');
+        
+        // 手書き入力パネルが表示された時にキャンバスサイズを再調整
+        if (targetPanel === 'drawing') {
+          setTimeout(() => {
+            resizeCanvas();
+          }, 50);
+        }
+      });
+    });
+    
+    // 背景設定パネル内のサブタブ切り替え
+    const settingsTabs = document.querySelectorAll('.settings-tab');
+    const settingsSubpanels = document.querySelectorAll('.settings-subpanel');
+    
+    settingsTabs.forEach(tab => {
+      addClickOrTouchListener(tab, () => {
+        const targetId = tab.dataset.settingsTab;
+        
+        settingsTabs.forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        
+        settingsSubpanels.forEach(panel => {
+          panel.classList.toggle('active', panel.id === 'settings-' + targetId);
+        });
+      });
+    });
+    
+    // デフォルト付箋プレビュー（読み込みボタン右の⚙でモーダル表示・フィールドの基準サイズに合わせて表示）
+    const defaultPreviewWrap = document.getElementById('default-preview-card-wrap');
+    const defaultStickyModal = document.getElementById('default-sticky-modal');
+    
+    function openDefaultStickyModal() {
+      if (defaultStickyModal && defaultPreviewWrap) {
+        defaultPreviewWrap.innerHTML = '';
+        buildDefaultPreviewCard();
+        defaultStickyModal.classList.add('open');
+        defaultStickyModal.setAttribute('aria-hidden', 'false');
+      }
+    }
+    function closeDefaultStickyModal() {
+      if (defaultStickyModal) {
+        defaultStickyModal.classList.remove('open');
+        defaultStickyModal.setAttribute('aria-hidden', 'true');
+      }
+    }
+    addClickOrTouchListener(document.getElementById('default-sticky-btn'), openDefaultStickyModal);
+    addClickOrTouchListener(document.getElementById('default-sticky-modal-close'), closeDefaultStickyModal);
+    if (defaultStickyModal) {
+      defaultStickyModal.addEventListener('click', function(e) {
+        if (e.target === defaultStickyModal) closeDefaultStickyModal();
+      });
+    }
+    
+    function buildDefaultPreviewCard() {
+      if (!defaultPreviewWrap) return;
+      defaultPreviewWrap.innerHTML = '';
+      const boardW = workspaceBoard.offsetWidth || refWorkspaceWidth || 400;
+      const boardH = workspaceBoard.offsetHeight || refWorkspaceHeight || 400;
+      const baseStickyPx = getStickySidePx(boardW, boardH);
+      const stickyPx = Math.max(32, Math.min(400, Math.round(baseStickyPx * defaultStickyScale)));
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.dataset.defaultPreview = '1';
+      card.dataset.type = 'text';
+      card.dataset.textSizeIndex = String(defaultTextSizeIndex);
+      card.style.backgroundColor = nextCardColor;
+      card.style.width = stickyPx + 'px';
+      card.style.height = stickyPx + 'px';
+      card.style.position = 'relative';
+      card.style.left = '0';
+      card.style.top = '0';
+      
+      const contentDiv = document.createElement('div');
+      contentDiv.className = 'card-content';
+      contentDiv.textContent = '文字の大きさ';
+      contentDiv.style.whiteSpace = 'pre-wrap';
+      const sizeIndex = Math.max(0, Math.min(defaultTextSizeIndex, textSizes.length - 1));
+      contentDiv.classList.add(textSizes[sizeIndex].name);
+      card.appendChild(contentDiv);
+      
+      const resizeHandle = document.createElement('div');
+      resizeHandle.className = 'resize-handle';
+      card.appendChild(resizeHandle);
+      
+      const cardControls = document.createElement('div');
+      cardControls.className = 'card-controls';
+      cardControls.style.opacity = '1';
+      const decreaseBtn = document.createElement('div');
+      decreaseBtn.className = 'card-control-btn';
+      decreaseBtn.innerHTML = '−';
+      addClickOrTouchListener(decreaseBtn, (e) => { e.stopPropagation(); changeTextSize(card, -1); });
+      cardControls.appendChild(decreaseBtn);
+      const resetBtn = document.createElement('div');
+      resetBtn.className = 'card-control-btn active';
+      resetBtn.innerHTML = '標準';
+      addClickOrTouchListener(resetBtn, (e) => { e.stopPropagation(); resetTextSize(card); });
+      cardControls.appendChild(resetBtn);
+      const increaseBtn = document.createElement('div');
+      increaseBtn.className = 'card-control-btn';
+      increaseBtn.innerHTML = '＋';
+      addClickOrTouchListener(increaseBtn, (e) => { e.stopPropagation(); changeTextSize(card, 1); });
+      cardControls.appendChild(increaseBtn);
+      card.appendChild(cardControls);
+      
+      function startDefaultPreviewResize(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const startW = card.offsetWidth;
+        const startH = card.offsetHeight;
+        const startX = e.clientX;
+        const startY = e.clientY;
+        function move(ev) {
+          const basePx = getStickySidePx(workspaceBoard.offsetWidth || 400, workspaceBoard.offsetHeight || 400);
+          const minPx = 32;
+          const maxPx = Math.min(400, Math.round(basePx * 2));
+          const w = Math.max(minPx, Math.min(maxPx, startW + (ev.clientX - startX)));
+          const h = Math.max(minPx, Math.min(maxPx, startH + (ev.clientY - startY)));
+          const s = Math.min(w, h);
+          card.style.width = s + 'px';
+          card.style.height = s + 'px';
+        }
+        function stop() {
+          document.removeEventListener('mousemove', move);
+          document.removeEventListener('mouseup', stop);
+          const basePx = getStickySidePx(workspaceBoard.offsetWidth || 400, workspaceBoard.offsetHeight || 400);
+          if (basePx > 0) defaultStickyScale = Math.max(0.5, Math.min(2, card.offsetWidth / basePx));
+        }
+        document.addEventListener('mousemove', move);
+        document.addEventListener('mouseup', stop);
+      }
+      function startDefaultPreviewResizeTouch(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const touch = e.touches[0];
+        const startW = card.offsetWidth;
+        const startH = card.offsetHeight;
+        const startX = touch.clientX;
+        const startY = touch.clientY;
+        function move(ev) {
+          const t = ev.touches[0];
+          const basePx = getStickySidePx(workspaceBoard.offsetWidth || 400, workspaceBoard.offsetHeight || 400);
+          const minPx = 32;
+          const maxPx = Math.min(400, Math.round(basePx * 2));
+          const w = Math.max(minPx, Math.min(maxPx, startW + (t.clientX - startX)));
+          const h = Math.max(minPx, Math.min(maxPx, startH + (t.clientY - startY)));
+          const s = Math.min(w, h);
+          card.style.width = s + 'px';
+          card.style.height = s + 'px';
+        }
+        function stop() {
+          document.removeEventListener('touchmove', move);
+          document.removeEventListener('touchend', stop);
+          const basePx = getStickySidePx(workspaceBoard.offsetWidth || 400, workspaceBoard.offsetHeight || 400);
+          if (basePx > 0) defaultStickyScale = Math.max(0.5, Math.min(2, card.offsetWidth / basePx));
+        }
+        document.addEventListener('touchmove', move, { passive: false });
+        document.addEventListener('touchend', stop);
+      }
+      resizeHandle.addEventListener('mousedown', startDefaultPreviewResize);
+      resizeHandle.addEventListener('touchstart', startDefaultPreviewResizeTouch, { passive: false });
+      
+      defaultPreviewWrap.appendChild(card);
+      updateTextSizeButtons(card);
+    }
+    
+    // 出力：フィールドをスクリーンショット
+    function captureWorkspaceAsCanvas() {
+      if (typeof html2canvas === 'undefined') {
+        return Promise.reject(new Error('html2canvas を読み込んでください'));
+      }
+      
+      return new Promise((resolve, reject) => {
+        // フォントの読み込みを待つ
+        if (document.fonts && document.fonts.ready) {
+          document.fonts.ready.then(() => {
+            // アニメーション中のカードを最終位置に移動
+            const cards = workspaceBoard.querySelectorAll('.card');
+            cards.forEach(card => {
+              // アニメーションを停止して最終位置に設定
+              if (card.classList.contains('card-drop-in')) {
+                const finalTop = card.style.getPropertyValue('--final-top');
+                if (finalTop) {
+                  card.style.top = finalTop;
+                  card.classList.remove('card-drop-in');
+                }
+              }
+              // 選択状態のアニメーションも停止
+              if (card.classList.contains('selected')) {
+                card.style.animation = 'none';
+                card.style.transform = 'none';
+              }
+            });
+            
+            // 少し待ってからキャプチャ（DOM更新を待つ）
+            setTimeout(() => {
+              html2canvas(workspace, {
+                scale: 2,
+                useCORS: true,
+                allowTaint: true,
+                logging: false,
+                backgroundColor: null,
+                removeContainer: false,
+                onclone: (clonedDoc) => {
+                  // クローンされたドキュメントでもアニメーションを停止
+                  const clonedCards = clonedDoc.querySelectorAll('.card');
+                  clonedCards.forEach(card => {
+                    card.style.animation = 'none';
+                    card.style.transform = 'none';
+                    const finalTop = card.style.getPropertyValue('--final-top');
+                    if (finalTop) {
+                      card.style.top = finalTop;
+                    }
+                    // カードコンテンツのスタイルを確実に適用
+                    const content = card.querySelector('.card-content');
+                    if (content) {
+                      // 改行を確実に表示するために、display: table-cellに変更
+                      // flexレイアウトでは改行が正しく表示されないため
+                      const text = content.textContent || content.innerText || '';
+                      
+                      // table-cellレイアウトを使用して中央配置と改行を両立
+                      card.style.display = 'table';
+                      content.style.display = 'table-cell';
+                      content.style.verticalAlign = 'middle';
+                      content.style.textAlign = 'center';
+                      content.style.whiteSpace = 'pre-wrap';
+                      content.style.wordBreak = 'break-word';
+                      content.style.overflow = 'hidden';
+                      content.style.width = '100%';
+                      content.style.height = '100%';
+                    }
+                  });
+                }
+              }).then(resolve).catch(reject);
+            }, 100);
+          }).catch(() => {
+            // フォント読み込みに失敗した場合も続行
+            html2canvas(workspace, {
+              scale: 2,
+              useCORS: true,
+              allowTaint: true,
+              logging: false,
+              backgroundColor: null
+            }).then(resolve).catch(reject);
+          });
+        } else {
+          // フォントAPIがサポートされていない場合
+          html2canvas(workspace, {
+            scale: 2,
+            useCORS: true,
+            allowTaint: true,
+            logging: false,
+            backgroundColor: null
+          }).then(resolve).catch(reject);
+        }
+      });
+    }
+    
+    let screenshotPreviewCanvas = null;
+    const screenshotModal = document.getElementById('screenshot-preview-modal');
+    const screenshotPreviewImg = document.getElementById('screenshot-preview-img');
+    
+    addClickOrTouchListener(document.getElementById('save-png-btn'), () => {
+      // アニメーション状態を保存
+      const cardStates = [];
+      const cards = workspaceBoard.querySelectorAll('.card');
+      cards.forEach(card => {
+        cardStates.push({
+          element: card,
+          hasDropIn: card.classList.contains('card-drop-in'),
+          hasSelected: card.classList.contains('selected'),
+          animation: card.style.animation,
+          transform: card.style.transform
+        });
+      });
+      
+      captureWorkspaceAsCanvas().then(canvas => {
+        // アニメーション状態を復元
+        cardStates.forEach(state => {
+          if (state.hasDropIn) {
+            state.element.classList.add('card-drop-in');
+          }
+          if (state.hasSelected) {
+            state.element.classList.add('selected');
+          }
+          state.element.style.animation = state.animation;
+          state.element.style.transform = state.transform;
+        });
+        
+        screenshotPreviewCanvas = canvas;
+        screenshotPreviewImg.src = canvas.toDataURL('image/png');
+        screenshotModal.classList.add('open');
+        screenshotModal.setAttribute('aria-hidden', 'false');
+      }).catch((error) => {
+        // エラー時もアニメーション状態を復元
+        cardStates.forEach(state => {
+          if (state.hasDropIn) {
+            state.element.classList.add('card-drop-in');
+          }
+          if (state.hasSelected) {
+            state.element.classList.add('selected');
+          }
+          state.element.style.animation = state.animation;
+          state.element.style.transform = state.transform;
+        });
+        console.error('キャプチャエラー:', error);
+        alert('キャプチャに失敗しました: ' + error.message);
+      });
+    });
+    
+    // PowerPoint出力機能
+    addClickOrTouchListener(document.getElementById('save-pptx-btn'), async () => {
+      const btn = document.getElementById('save-pptx-btn');
+      const originalText = btn.textContent;
+      let backgroundImageWarning = false;
+      
+      try {
+        btn.disabled = true;
+        btn.textContent = '出力中...';
+        
+        // 背景画像の読み込み警告をキャッチするためのフラグ
+        const originalConsoleWarn = console.warn;
+        console.warn = function(...args) {
+          if (args[0] && args[0].includes && args[0].includes('背景画像の読み込みに失敗')) {
+            backgroundImageWarning = true;
+          }
+          originalConsoleWarn.apply(console, args);
+        };
+        
+        await exportToPowerPoint();
+        
+        console.warn = originalConsoleWarn;
+        
+        btn.textContent = originalText;
+        btn.disabled = false;
+        
+        if (backgroundImageWarning) {
+          alert('PowerPointファイルを保存しました。\n\n注意: 背景画像の読み込みに失敗しました。\nfile://プロトコルで開いている場合、画像を読み込めない場合があります。\nローカルサーバーで実行するか、画像をBase64にエンコードしてください。');
+        } else {
+          alert('PowerPointファイルを保存しました');
+        }
+      } catch (error) {
+        console.error('PowerPoint出力エラー:', error);
+        btn.disabled = false;
+        btn.textContent = originalText;
+        alert('PowerPoint出力に失敗しました: ' + error.message);
+      }
+    });
+    
+    async function exportToPowerPoint() {
+      if (typeof PptxGenJS === 'undefined') {
+        alert('PowerPoint出力ライブラリが読み込まれていません。\n\nページを再読み込みしてください。\n\nもし問題が続く場合は、ブラウザのコンソール（F12キー）を確認してください。');
+        console.error('PptxGenJS is not defined.');
+        return;
+      }
+      
+      const scopeEl = document.querySelector('input[name="pptx-scope"]:checked');
+      const scope = (scopeEl && scopeEl.value) || 'current';
+      const exportAll = scope === 'all';
+      
+      const pptx = new PptxGenJS();
+      pptx.layout = 'LAYOUT_WIDE';
+      
+      if (exportAll && typeof saveCurrentPageToState === 'function') {
+        saveCurrentPageToState();
+        const savedPageIndex = typeof currentPageIndex !== 'undefined' ? currentPageIndex : 0;
+        const pages = typeof pageStates !== 'undefined' ? pageStates : [];
+        const total = typeof TOTAL_SLIDES !== 'undefined' ? TOTAL_SLIDES : 5;
+        
+        for (let i = 0; i < total; i++) {
+          if (pages[i] && typeof loadPageData === 'function') {
+            loadPageData(pages[i]);
+            await new Promise(r => setTimeout(r, 50));
+          }
+          await addCurrentPageAsSlide(pptx);
+        }
+        
+        if (savedPageIndex >= 0 && pages[savedPageIndex] && typeof loadPageData === 'function') {
+          loadPageData(pages[savedPageIndex]);
+          if (typeof currentPageIndex !== 'undefined') currentPageIndex = savedPageIndex;
+          if (typeof updatePageUI === 'function') updatePageUI();
+        }
+      } else {
+        await addCurrentPageAsSlide(pptx);
+      }
+      
+      const fileName = 'cardmap-' + new Date().toISOString().slice(0, 10) + '.pptx';
+      await pptx.writeFile({ fileName: fileName });
+    }
+    
+    async function addCurrentPageAsSlide(pptx) {
+      const slide = pptx.addSlide();
+      const boardW = workspaceBoard.offsetWidth || refWorkspaceWidth;
+      const boardH = workspaceBoard.offsetHeight || refWorkspaceHeight;
+      const slideWidthInches = 11.69;
+      const slideHeightInches = 8.27;
+      const pxToInch = 1 / 96;
+      const scaleX = slideWidthInches / (boardW * pxToInch);
+      const scaleY = slideHeightInches / (boardH * pxToInch);
+      const scale = Math.min(scaleX, scaleY);
+      
+      const bgStyle = window.getComputedStyle(workspaceBoard);
+      const bgColor = bgStyle.backgroundColor || currentBgColor;
+      
+      let bgImageUrl = null;
+      if (currentBgImage) {
+        bgImageUrl = currentBgImage;
+      } else if (currentTemplate !== 'none') {
+        const templateImageMap = {
+          'venn2': 'img/venn2.png', 'venn3': 'img/venn3.png', 'coordinate': 'img/coordinate.png',
+          'diamond': 'img/diamond.png', 'data-chart': 'img/data-chart.png', 'web6': 'img/web6.png',
+          'web0': 'img/web0.png', 'y-chart': 'img/y-chart.png', 'x-chart': 'img/x-chart.png',
+          'w-chart': 'img/w-chart.png', 'butterfly': 'img/butterfly.png', 'butterfly2': 'img/butterfly2.png',
+          'fishbone': 'img/fishbone.png', 'pmi': 'img/pmi.png', 'bear': 'img/bear.png',
+          'jellyfish': 'img/jellyfish.png', 'tree': 'img/tree.png', 'candy': 'img/candy.png',
+          'KWL': 'img/KWL.png', 'information-analysis-chart': 'img/information-analysis-chart.png',
+          'pyramid': 'img/pyramid.png', 'mountain': 'img/mountain.png', 'target': 'img/target.png', 'table': 'img/table.png'
+        };
+        if (templateImageMap[currentTemplate]) bgImageUrl = templateImageMap[currentTemplate];
+      }
+      if (!bgImageUrl && bgStyle.backgroundImage && bgStyle.backgroundImage !== 'none') {
+        const match = bgStyle.backgroundImage.match(/url\(['"]?([^'"]+)['"]?\)/);
+        if (match && match[1]) bgImageUrl = match[1];
+      }
+      
+      if (!bgImageUrl && bgColor && bgColor !== 'rgba(0, 0, 0, 0)' && bgColor !== 'transparent') {
+        slide.background = { color: rgbToHex(bgColor) };
+      }
+      if (bgImageUrl) {
+        try {
+          let imageData = bgImageUrl.startsWith('data:') ? bgImageUrl : await imageUrlToBase64(bgImageUrl);
+          slide.background = { data: imageData };
+        } catch (e) {
+          if (bgColor && bgColor !== 'rgba(0, 0, 0, 0)' && bgColor !== 'transparent') {
+            slide.background = { color: rgbToHex(bgColor) };
+          }
+        }
+      } else if (bgColor && bgColor !== 'rgba(0, 0, 0, 0)' && bgColor !== 'transparent') {
+        slide.background = { color: rgbToHex(bgColor) };
+      }
+      
+      // 接続線：2要素の中心を結ぶ1本の線（w=長さ, h=0, 回転で修復を避ける）
+      if (typeof connections !== 'undefined' && Array.isArray(connections)) {
+        const lineColor = '4CAF50';
+        const minLineInch = 0.005;
+        connections.forEach(conn => {
+          if (!conn.from || !conn.to) return;
+          const fromX = conn.from.offsetLeft + conn.from.offsetWidth / 2;
+          const fromY = conn.from.offsetTop + conn.from.offsetHeight / 2;
+          const toX = conn.to.offsetLeft + conn.to.offsetWidth / 2;
+          const toY = conn.to.offsetTop + conn.to.offsetHeight / 2;
+          const x1 = (fromX * pxToInch) * scale;
+          const y1 = (fromY * pxToInch) * scale;
+          const x2 = (toX * pxToInch) * scale;
+          const y2 = (toY * pxToInch) * scale;
+          const dx = x2 - x1;
+          const dy = y2 - y1;
+          if (typeof x1 !== 'number' || typeof y1 !== 'number' || !Number.isFinite(x1) || !Number.isFinite(y1) ||
+              !Number.isFinite(dx) || !Number.isFinite(dy)) return;
+          const len = Math.sqrt(dx * dx + dy * dy);
+          if (len < minLineInch) return;
+          const angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
+          try {
+            slide.addShape(pptx.ShapeType.line, {
+              x: x1,
+              y: y1,
+              w: len,
+              h: 0,
+              rotate: angleDeg,
+              line: { color: lineColor, width: 1 }
+            });
+          } catch (err) {
+            console.warn('PPTX export: 接続線の追加をスキップしました', err);
+          }
+        });
+      }
+      
+      const cards = Array.from(workspaceBoard.querySelectorAll('.card'));
+      cards.sort((a, b) => {
+        const topA = parseFloat(a.style.top) || 0, topB = parseFloat(b.style.top) || 0;
+        if (Math.abs(topA - topB) > 10) return topA - topB;
+        return (parseFloat(a.style.left) || 0) - (parseFloat(b.style.left) || 0);
+      });
+      
+      for (const card of cards) {
+        const cardLeft = card.offsetLeft, cardTop = card.offsetTop;
+        const cardWidth = card.offsetWidth, cardHeight = card.offsetHeight;
+        const cardType = card.dataset.type;
+        const cardColor = card.dataset.color || card.style.backgroundColor;
+        const x = (cardLeft * pxToInch) * scale, y = (cardTop * pxToInch) * scale;
+        const w = (cardWidth * pxToInch) * scale, h = (cardHeight * pxToInch) * scale;
+        
+        if (cardType === 'text') {
+          const contentDiv = card.querySelector('.card-content');
+          const text = contentDiv ? contentDiv.textContent : '';
+          if (text.trim()) {
+            slide.addText(text, {
+              shape: pptx.ShapeType.rect, x, y, w, h,
+              fill: { color: rgbToHex(cardColor) }, line: { color: '808080', width: 1 }, rectRadius: 0.05,
+              fontSize: Math.max(8, Math.min(24, Math.round(h * 12))), align: 'center', valign: 'middle',
+              color: '000000', wrap: true, margin: 0.05
+            });
+          }
+        } else if (cardType === 'image') {
+          const img = card.querySelector('img');
+          if (img && img.src) {
+            try {
+              const imageDataWithBg = await imageWithBackgroundColor(img.src, cardColor);
+              slide.addImage({ data: imageDataWithBg, x, y, w, h });
+            } catch (err) {
+              slide.addShape(pptx.ShapeType.rect, {
+                x, y, w, h, fill: { color: rgbToHex(cardColor) },
+                line: { color: '808080', width: 1 }, rectRadius: 0.05
+              });
+            }
+          }
+        }
+      }
+    }
+    
+    // RGB/RGBAカラーを16進数に変換
+    function rgbToHex(color) {
+      if (!color) return 'FFFFFF';
+      if (color.startsWith('#')) return color.substring(1);
+      
+      const rgbMatch = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+      if (rgbMatch) {
+        const r = parseInt(rgbMatch[1]).toString(16).padStart(2, '0');
+        const g = parseInt(rgbMatch[2]).toString(16).padStart(2, '0');
+        const b = parseInt(rgbMatch[3]).toString(16).padStart(2, '0');
+        return (r + g + b).toUpperCase();
+      }
+      
+      return 'FFFFFF';
+    }
+    
+    // 画像URLをBase64に変換
+    function imageUrlToBase64(url) {
+      return new Promise((resolve, reject) => {
+        // data URLの場合はそのまま返す
+        if (url.startsWith('data:')) {
+          resolve(url);
+          return;
+        }
+        
+        // 外部URLまたはローカルファイル
+        const img = new Image();
+        
+        // file://プロトコルの場合はcrossOriginを設定しない（CORSエラーを避けるため）
+        if (!url.startsWith('file://')) {
+          img.crossOrigin = 'anonymous';
+        }
+        
+        img.onload = function() {
+          try {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            
+            const dataUrl = canvas.toDataURL('image/png');
+            resolve(dataUrl);
+          } catch (error) {
+            reject(new Error('画像の変換に失敗しました: ' + error.message));
+          }
+        };
+        
+        img.onerror = function() {
+          // より詳細なエラーメッセージを提供
+          const errorMsg = url.startsWith('file://') 
+            ? 'ローカルファイルの読み込みはセキュリティ上の理由で制限されています。ローカルサーバーで実行するか、画像をBase64にエンコードしてください。'
+            : '画像の読み込みに失敗しました: ' + url;
+          reject(new Error(errorMsg));
+        };
+        
+        // 画像の読み込みを開始
+        try {
+          img.src = url;
+        } catch (error) {
+          reject(new Error('画像の読み込みを開始できませんでした: ' + error.message));
+        }
+      });
+    }
+    
+    // 画像を背景色で塗りつぶした画像に変換
+    function imageWithBackgroundColor(imageUrl, backgroundColor) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        
+        img.onload = function() {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+          
+          // 背景色で塗りつぶす
+          ctx.fillStyle = backgroundColor;
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          
+          // 画像を描画（透明部分は背景色が見える）
+          ctx.drawImage(img, 0, 0);
+          
+          try {
+            const dataUrl = canvas.toDataURL('image/png');
+            resolve(dataUrl);
+          } catch (error) {
+            reject(new Error('画像の変換に失敗しました: ' + error.message));
+          }
+        };
+        
+        img.onerror = function() {
+          reject(new Error('画像の読み込みに失敗しました: ' + imageUrl));
+        };
+        
+        // data URLの場合はそのまま使用
+        if (imageUrl.startsWith('data:')) {
+          img.src = imageUrl;
+        } else {
+          img.src = imageUrl;
+        }
+      });
+    }
+    
+    function closeScreenshotModal() {
+      screenshotModal.classList.remove('open');
+      screenshotModal.setAttribute('aria-hidden', 'true');
+      screenshotCopyMenu.classList.remove('open');
+      screenshotPreviewCanvas = null;
+    }
+    
+    addClickOrTouchListener(document.getElementById('screenshot-preview-close-btn'), closeScreenshotModal);
+    screenshotModal.addEventListener('click', (e) => {
+      if (e.target === screenshotModal) closeScreenshotModal();
+    });
+    screenshotModal.addEventListener('touchend', (e) => {
+      if (e.target === screenshotModal) {
+        e.preventDefault();
+        closeScreenshotModal();
+      }
+    });
+    
+    addClickOrTouchListener(document.getElementById('screenshot-save-file-btn'), () => {
+      if (!screenshotPreviewCanvas) return;
+      const a = document.createElement('a');
+      a.download = 'cardmap-' + (new Date().toISOString().slice(0, 10)) + '.png';
+      a.href = screenshotPreviewCanvas.toDataURL('image/png');
+      a.click();
+      closeScreenshotModal();
+    });
+    
+    const screenshotCopyMenu = document.getElementById('screenshot-copy-menu');
+    addClickOrTouchListener(document.getElementById('screenshot-copy-clipboard-btn'), (e) => {
+      e.stopPropagation();
+      screenshotCopyMenu.classList.toggle('open');
+    });
+    document.addEventListener('click', () => {
+      screenshotCopyMenu.classList.remove('open');
+    });
+    document.addEventListener('touchend', () => {
+      screenshotCopyMenu.classList.remove('open');
+    });
+    screenshotCopyMenu.addEventListener('click', (e) => e.stopPropagation());
+    
+    function dataUrlToBlob(dataUrl) {
+      const base64 = dataUrl.split(',')[1];
+      if (!base64) return null;
+      const bin = atob(base64);
+      const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      return new Blob([arr], { type: 'image/png' });
+    }
+    
+    async function doScreenshotCopyToClipboard() {
+      if (!screenshotPreviewCanvas) return;
+      const cap = screenshotPreviewCanvas;
+      if (!navigator.clipboard || !window.ClipboardItem) {
+        alert('お使いのブラウザでは画像のコピーに対応していません。\n画像を右クリック → 「画像をコピー」をお試しください。');
+        return;
+      }
+      if (!window.isSecureContext) {
+        alert('クリップボードには HTTPS または localhost で開いた場合のみ対応しています。\n画像を右クリック → 「画像をコピー」をお試しください。');
+        return;
+      }
+      let blob = null;
+      try {
+        const dataUrl = cap.toDataURL('image/png');
+        blob = dataUrlToBlob(dataUrl);
+      } catch (_) {}
+      if (!blob) {
+        try {
+          blob = await new Promise((resolve, reject) => {
+            cap.toBlob(b => (b ? resolve(b) : reject()), 'image/png');
+          });
+        } catch (_) {}
+      }
+      if (!blob) {
+        alert('画像の取得に失敗しました。');
+        return;
+      }
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        alert('クリップボードにコピーしました');
+        screenshotCopyMenu.classList.remove('open');
+        closeScreenshotModal();
+      } catch (err) {
+        screenshotCopyMenu.classList.remove('open');
+        alert('クリップボードに書き込めませんでした。\n・このページを http://localhost または https:// で開き直す\n・画像を右クリック → 「画像をコピー」\nのいずれかをお試しください。');
+      }
+    }
+    
+    addClickOrTouchListener(document.getElementById('screenshot-copy-menu-programmatic'), (e) => {
+      e.stopPropagation();
+      doScreenshotCopyToClipboard();
+    });
+    
+    // キャンバス設定
+    const canvas = document.getElementById('drawing-canvas');
+    const ctx = canvas.getContext('2d');
+    
+    // キャンバスのサイズを表示サイズに合わせる関数
+    function resizeCanvas() {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      
+      // 実際のサイズを設定（高DPIディスプレイ対応）
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      
+      // コンテキストをスケール
+      ctx.scale(dpr, dpr);
+      
+      // 描画設定を再設定
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = '#000';
+    }
+    
+    // 初期サイズ設定（少し遅延させてDOMが完全に読み込まれた後に実行）
+    setTimeout(() => {
+      resizeCanvas();
+    }, 100);
+    
+    // ウィンドウリサイズ時にキャンバスサイズを調整
+    window.addEventListener('resize', resizeCanvas);
+    
+    let isDrawing = false;
+    let lastX = 0;
+    let lastY = 0;
+    
+    // ワークスペース（表示枠）とボード（カード・線の論理座標）
+    const workspace = document.getElementById('workspace');
+    const workspaceBoard = document.getElementById('workspace-board');
+    let refWorkspaceWidth = 0;
+    let refWorkspaceHeight = 0;
+    let currentBoardScaleX = 1;
+    let currentBoardScaleY = 1;
+    const modeText = document.getElementById('mode-text');
+    let cards = [];
+    let connections = [];
+    let connectingCard = null;
+    
+    function updateModeText() {
+      modeText.textContent = connectingCard ? '接続先のカードをクリック' : 'ドラッグで移動・クリックで接続';
+    }
+    let selectedCard = null;
+    
+    // ズーム設定
+    let currentZoom = 1;
+    const zoomStep = 0.1;
+    const minZoom = 0.5;
+    const maxZoom = 2;
+    
+    // 背景設定
+    let currentBgColor = '#ffffff';
+    let currentTemplate = 'none';
+    let currentBgImage = null;
+    
+    // 5枚のスライド（固定）
+    const TOTAL_SLIDES = 5;
+    function createEmptyPage() {
+      return { cards: [], connections: [], background: { color: '#ffffff', template: 'none', image: null } };
+    }
+    // 読み込み用：ページに background が無い・欠けている場合にデフォルトを補う
+    function normalizePageBackground(page) {
+      if (!page || typeof page !== 'object') return createEmptyPage();
+      var bg = (page.background && typeof page.background === 'object') ? page.background : {};
+      page.background = {
+        color: (bg.color != null && String(bg.color).trim() !== '') ? String(bg.color).trim() : '#ffffff',
+        template: (bg.template != null && String(bg.template).trim() !== '') ? String(bg.template).trim() : 'none',
+        image: (bg.image != null && bg.image !== '') ? bg.image : null
+      };
+      return page;
+    }
+    let pageStates = [];
+    for (var i = 0; i < TOTAL_SLIDES; i++) pageStates.push(createEmptyPage());
+    let currentPageIndex = 0;
+    
+    // カードの色設定 - デフォルトはパステルイエロー
+    const cardColors = [
+      { color: '#fff9c4', name: 'イエロー' },
+      { color: '#ffffff', name: '白' },
+      { color: '#ffcdd2', name: 'ピンク' },
+      { color: '#ffccbc', name: 'ピーチ' },
+      { color: '#ffe0b2', name: 'オレンジ' },
+      { color: '#ffecb3', name: 'アンバー' },
+      { color: '#f1f8e9', name: 'ライム' },
+      { color: '#c8e6c9', name: 'ミント' },
+      { color: '#b2dfdb', name: 'ティール' },
+      { color: '#b3e5fc', name: 'スカイ' },
+      { color: '#bbdefb', name: 'ライトブルー' },
+      { color: '#c5cae9', name: 'インディゴ' },
+      { color: '#e1bee7', name: 'ラベンダー' },
+      { color: '#d1c4e9', name: '紫' },
+      { color: '#e8eaf6', name: '薄紫' },
+      { color: '#fce4ec', name: '薄ピンク' }
+    ];
+    
+    let nextCardColor = cardColors[0].color;
+    
+    function applySelectedColorToInputAreas(color) {
+      const textInput = document.getElementById('text-input');
+      const drawingCanvas = document.getElementById('drawing-canvas');
+      if (textInput) textInput.style.backgroundColor = color;
+      if (drawingCanvas) drawingCanvas.style.backgroundColor = color;
+    }
+    
+    function renderNextCardColorOptions() {
+      const containers = [
+        document.getElementById('text-panel-card-colors'),
+        document.getElementById('drawing-panel-card-colors')
+      ];
+      containers.forEach(container => {
+        if (!container) return;
+        container.innerHTML = '';
+        cardColors.forEach((item, index) => {
+          const el = document.createElement('div');
+          el.className = 'next-card-color-option' + (item.color === nextCardColor ? ' active' : '');
+          el.style.backgroundColor = item.color;
+          el.title = item.name;
+          el.dataset.color = item.color;
+          addClickOrTouchListener(el, () => {
+            nextCardColor = item.color;
+            document.querySelectorAll('.next-card-color-option').forEach(opt => {
+              opt.classList.toggle('active', opt.dataset.color === nextCardColor);
+            });
+            applySelectedColorToInputAreas(nextCardColor);
+          });
+          container.appendChild(el);
+        });
+      });
+      applySelectedColorToInputAreas(nextCardColor);
+    }
+    renderNextCardColorOptions();
+    
+    // テキストサイズの定義
+    const textSizes = [
+      { name: 'text-xs', label: '極小' },
+      { name: 'text-sm', label: '小' },
+      { name: 'text-md', label: '標準' },
+      { name: 'text-lg', label: '大' },
+      { name: 'text-xl', label: '極大' },
+      { name: 'text-2xl', label: '特大' },
+      { name: 'text-3xl', label: '超大' },
+      { name: 'text-4xl', label: '巨大' }
+    ];
+    
+    // 付箋のデフォルト設定（次の付箋から適用）
+    let defaultStickyScale = 1.0;   // 50%〜200% → 0.5〜2.0
+    let defaultTextSizeIndex = 3;   // textSizes のインデックス（3 = 大）
+    
+    // ウィンドウリサイズ時にワークスペースのサイズを調整（ボードを拡縮してカードも一緒に縮小）
+    function adjustWorkspaceSize() {
+      const container = document.querySelector('.workspace-container');
+      const containerWidth = container.clientWidth;
+      const containerHeight = container.clientHeight;
+      
+      const aspectRatio = 1.414; // A4横 297mm / 210mm
+      
+      let width = containerWidth;
+      let height = width / aspectRatio;
+      if (height > containerHeight) {
+        height = containerHeight;
+        width = height * aspectRatio;
+      }
+      
+      if ((refWorkspaceWidth === 0 || refWorkspaceHeight === 0) && width > 0 && height > 0) {
+        refWorkspaceWidth = width;
+        refWorkspaceHeight = height;
+        workspaceBoard.style.width = refWorkspaceWidth + 'px';
+        workspaceBoard.style.height = refWorkspaceHeight + 'px';
+      }
+      
+      workspace.style.width = width + 'px';
+      workspace.style.height = height + 'px';
+      currentBoardScaleX = refWorkspaceWidth > 0 ? width / refWorkspaceWidth : 1;
+      currentBoardScaleY = refWorkspaceHeight > 0 ? height / refWorkspaceHeight : 1;
+      workspaceBoard.style.transform = `scale(${currentBoardScaleX}, ${currentBoardScaleY})`;
+      alignThinkingToolToField();
+    }
+    
+    function alignThinkingToolToField() {
+      var mainContent = document.querySelector('.main-content');
+      var ws = document.getElementById('workspace');
+      var wrap = document.querySelector('.thinking-tool-dropdown-wrap');
+      if (!mainContent || !ws || !wrap) return;
+      var mainRect = mainContent.getBoundingClientRect();
+      var wsRect = ws.getBoundingClientRect();
+      var navPaddingRight = 5;
+      var marginRightPx = (mainRect.right - navPaddingRight) - wsRect.right;
+      wrap.style.marginRight = Math.max(0, marginRightPx) + 'px';
+    }
+    
+    // 初期化時とウィンドウリサイズ時にワークスペースのサイズを調整
+    window.addEventListener('load', adjustWorkspaceSize);
+    window.addEventListener('resize', adjustWorkspaceSize);
+    window.addEventListener('resize', () => {
+      const left = parseInt(bottomPanel.style.left, 10);
+      const bottom = parseInt(bottomPanel.style.bottom, 10);
+      if (!isNaN(left) || !isNaN(bottom)) applyPanelPosition(isNaN(left) ? undefined : left, isNaN(bottom) ? undefined : bottom);
+    });
+    
+    // ズーム機能
+    addClickOrTouchListener(document.getElementById('zoom-in'), () => {
+      setZoom(currentZoom + zoomStep);
+    });
+    
+    addClickOrTouchListener(document.getElementById('zoom-out'), () => {
+      setZoom(currentZoom - zoomStep);
+    });
+    
+    addClickOrTouchListener(document.getElementById('zoom-reset'), () => {
+      setZoom(1);
+    });
+    
+    function setZoom(zoom) {
+      // ズームレベルを制限
+      zoom = Math.max(minZoom, Math.min(maxZoom, zoom));
+      currentZoom = zoom;
+      
+      // ワークスペースにズームを適用
+      workspace.style.transform = `scale(${zoom})`;
+      workspace.style.transformOrigin = 'center center';
+      
+      // ズームレベル表示を更新
+      document.getElementById('zoom-level').textContent = `${Math.round(zoom * 100)}%`;
+    }
+    
+    // 描画イベント
+    function startDrawing(e) {
+      isDrawing = true;
+      const rect = canvas.getBoundingClientRect();
+      const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+      const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+      
+      // キャンバス内の相対座標を計算（スケールは既に適用済み）
+      [lastX, lastY] = [
+        clientX - rect.left,
+        clientY - rect.top
+      ];
+    }
+    
+    function draw(e) {
+      if (!isDrawing) return;
+      
+      const rect = canvas.getBoundingClientRect();
+      const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+      const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+      
+      // キャンバス内の相対座標を計算（スケールは既に適用済み）
+      const x = clientX - rect.left;
+      const y = clientY - rect.top;
+      
+      ctx.beginPath();
+      ctx.moveTo(lastX, lastY);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+      
+      [lastX, lastY] = [x, y];
+    }
+    
+    function stopDrawing() {
+      isDrawing = false;
+    }
+    
+    // マウスイベント
+    canvas.addEventListener('mousedown', startDrawing);
+    canvas.addEventListener('mousemove', draw);
+    canvas.addEventListener('mouseup', stopDrawing);
+    canvas.addEventListener('mouseout', stopDrawing);
+    
+    // タッチイベント
+    canvas.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      e.stopPropagation(); // パネルドラッグに伝播しないようにする
+      startDrawing(e);
+    });
+    
+    canvas.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      e.stopPropagation(); // パネルドラッグに伝播しないようにする
+      draw(e);
+    });
+    
+    canvas.addEventListener('touchend', (e) => {
+      e.preventDefault();
+      e.stopPropagation(); // パネルドラッグに伝播しないようにする
+      stopDrawing();
+    });
+    
+    // キャンバスクリア
+    addClickOrTouchListener(document.getElementById('clear-btn'), () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    });
+    
+    // カード追加（手書き）
+    addClickOrTouchListener(document.getElementById('drawing-add-btn'), addDrawingCard);
+    
+    // 手書き入力時も Enter で追加
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || e.shiftKey) return;
+      if (!document.getElementById('drawing-panel').classList.contains('active')) return;
+      if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+      e.preventDefault();
+      addDrawingCard();
+    });
+    
+    // カード追加（テキスト）
+    addClickOrTouchListener(document.getElementById('text-add-btn'), addTextCard);
+    
+    const textInputEl = document.getElementById('text-input');
+    let textInputComposing = false;
+    
+    textInputEl.addEventListener('compositionstart', () => {
+      textInputComposing = true;
+    });
+    textInputEl.addEventListener('compositionend', () => {
+      setTimeout(() => {
+        textInputComposing = false;
+      }, 150);
+    });
+    
+    // エンターキーでカード追加（IME変換・確定中は反応しない / Safari対応）
+    textInputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !textInputComposing) {
+        e.preventDefault();
+        addTextCard();
+      }
+    });
+    
+    // 背景色の設定
+    document.querySelectorAll('.color-option').forEach(option => {
+      addClickOrTouchListener(option, () => {
+        // アクティブクラスを更新
+        document.querySelectorAll('.color-option').forEach(opt => opt.classList.remove('active'));
+        option.classList.add('active');
+        
+        // 背景色を設定
+        currentBgColor = option.dataset.color;
+        updateWorkspaceBackground();
+      });
+    });
+    
+    // シンキングツール一覧（フィールドプルダウン・設定パネル同期用）
+    const THINKING_TEMPLATE_OPTIONS = [
+      { id: 'none', img: null, label: 'なし' },
+      { id: 'venn2', img: 'img/venn2.png', label: 'ベン図２' },
+      { id: 'venn3', img: 'img/venn3.png', label: 'ベン図３' },
+      { id: 'coordinate', img: 'img/coordinate.png', label: '座標軸' },
+      { id: 'diamond', img: 'img/diamond.png', label: 'ダイヤモンドランキング' },
+      { id: 'data-chart', img: 'img/data-chart.png', label: 'データチャート' },
+      { id: 'web6', img: 'img/web6.png', label: 'イメージマップ６' },
+      { id: 'web0', img: 'img/web0.png', label: 'イメージマップ０' },
+      { id: 'y-chart', img: 'img/y-chart.png', label: 'Yチャート' },
+      { id: 'x-chart', img: 'img/x-chart.png', label: 'Xチャート' },
+      { id: 'w-chart', img: 'img/w-chart.png', label: 'Wチャート' },
+      { id: 'butterfly', img: 'img/butterfly.png', label: 'バタフライチャート１' },
+      { id: 'butterfly2', img: 'img/butterfly2.png', label: 'バタフライチャート２' },
+      { id: 'fishbone', img: 'img/fishbone.png', label: '要因特性図（フィッシュボーン）' },
+      { id: 'pmi', img: 'img/pmi.png', label: 'PMI図' },
+      { id: 'bear', img: 'img/bear.png', label: 'クマ手チャート' },
+      { id: 'jellyfish', img: 'img/jellyfish.png', label: 'クラゲチャート' },
+      { id: 'tree', img: 'img/tree.png', label: 'ロジックツリー' },
+      { id: 'candy', img: 'img/candy.png', label: 'キャンディチャート' },
+      { id: 'kwl', img: 'img/KWL.png', label: 'KWL' },
+      { id: 'information-analysis-chart', img: 'img/information-analysis-chart.png', label: '情報分析チャート' },
+      { id: 'pyramid', img: 'img/pyramid.png', label: 'ピラミッドチャート' },
+      { id: 'mountain', img: 'img/mountain.png', label: 'プロット図' },
+      { id: 'target', img: 'img/target.png', label: '同心円チャート' },
+      { id: 'table', img: 'img/table.png', label: 'テーブル' }
+    ];
+    
+    function updateThinkingToolTriggerDisplay() {
+      const thumb = document.getElementById('thinking-tool-trigger-thumb');
+      const label = document.getElementById('thinking-tool-trigger-label');
+      if (!thumb || !label) return;
+      const opt = THINKING_TEMPLATE_OPTIONS.find(function(o) { return o.id === currentTemplate; });
+      if (opt) {
+        label.textContent = opt.label;
+        if (opt.img) {
+          thumb.style.backgroundImage = 'url(' + opt.img + ')';
+          thumb.style.backgroundColor = 'transparent';
+        } else {
+          thumb.style.backgroundImage = 'none';
+          thumb.style.backgroundColor = '#f0f0f0';
+        }
+      } else {
+        label.textContent = 'なし';
+        thumb.style.backgroundImage = 'none';
+        thumb.style.backgroundColor = '#f0f0f0';
+      }
+    }
+    
+    function buildThinkingToolDropdown() {
+      const grid = document.getElementById('thinking-tool-menu-grid');
+      const trigger = document.getElementById('thinking-tool-trigger');
+      const menu = document.getElementById('thinking-tool-menu');
+      if (!grid || !trigger || !menu) return;
+      document.body.appendChild(menu);
+      grid.innerHTML = '';
+      THINKING_TEMPLATE_OPTIONS.forEach(function(opt) {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'thinking-tool-menu-item';
+        item.dataset.template = opt.id;
+        item.innerHTML = '<span class="thinking-tool-menu-item-thumb" style="' + (opt.img ? 'background-image:url(' + opt.img + ')' : '') + '"></span><span class="thinking-tool-menu-item-label">' + (opt.label || opt.id) + '</span>';
+        addClickOrTouchListener(item, function() {
+          currentTemplate = opt.id;
+          updateWorkspaceBackground();
+          document.querySelectorAll('.template-option').forEach(function(el) { el.classList.remove('active'); });
+          var panelOpt = document.querySelector('.template-option[data-template="' + currentTemplate + '"]');
+          if (panelOpt) panelOpt.classList.add('active');
+          updateThinkingToolTriggerDisplay();
+          closeMenu();
+        });
+        grid.appendChild(item);
+      });
+      function openMenu() {
+        var r = trigger.getBoundingClientRect();
+        menu.style.top = (r.bottom + 4) + 'px';
+        menu.style.left = 'auto';
+        menu.style.right = (window.innerWidth - r.right) + 'px';
+        menu.removeAttribute('hidden');
+        menu.classList.add('is-open');
+        menu.style.display = 'block';
+        trigger.setAttribute('aria-expanded', 'true');
+      }
+      function closeMenu() {
+        menu.setAttribute('hidden', '');
+        menu.classList.remove('is-open');
+        menu.style.display = 'none';
+        trigger.setAttribute('aria-expanded', 'false');
+      }
+      addClickOrTouchListener(trigger, function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (menu.classList.contains('is-open')) {
+          closeMenu();
+        } else {
+          openMenu();
+        }
+      });
+      document.addEventListener('click', function closeThinkingMenu(e) {
+        if (!menu.classList.contains('is-open')) return;
+        if (trigger.contains(e.target) || menu.contains(e.target)) return;
+        closeMenu();
+      });
+      updateThinkingToolTriggerDisplay();
+    }
+    buildThinkingToolDropdown();
+    
+    // シンキングツールテンプレートの設定（背景設定パネル）
+    document.querySelectorAll('.template-option').forEach(option => {
+      addClickOrTouchListener(option, () => {
+        // アクティブクラスを更新
+        document.querySelectorAll('.template-option').forEach(opt => opt.classList.remove('active'));
+        option.classList.add('active');
+        
+        // テンプレートを設定
+        currentTemplate = option.dataset.template;
+        updateWorkspaceBackground();
+        updateThinkingToolTriggerDisplay();
+      });
+    });
+    
+    // 背景画像アップロード
+    document.getElementById('bg-image-upload').addEventListener('change', function(e) {
+      const file = e.target.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = function(event) {
+          currentBgImage = event.target.result;
+          
+          // プレビューを表示
+          document.getElementById('bg-image-preview').classList.remove('hidden');
+          document.getElementById('preview-thumbnail').style.backgroundImage = `url(${currentBgImage})`;
+          
+          // 背景を更新
+          updateWorkspaceBackground();
+        };
+        reader.readAsDataURL(file);
+      }
+    });
+    
+    // 背景画像削除
+    addClickOrTouchListener(document.getElementById('remove-bg-image'), function() {
+      currentBgImage = null;
+      document.getElementById('bg-image-upload').value = '';
+      document.getElementById('bg-image-preview').classList.add('hidden');
+      updateWorkspaceBackground();
+    });
+    
+    // ワークスペースの背景を更新（ボードに設定して拡縮時に一緒に縮小）
+    function updateWorkspaceBackground() {
+      if (!workspaceBoard) return;
+      workspaceBoard.style.backgroundColor = currentBgColor;
+      
+      // テンプレート名から画像ファイル名へのマッピング
+      const templateImageMap = {
+        'venn2': 'img/venn2.png',
+        'venn3': 'img/venn3.png',
+        'coordinate': 'img/coordinate.png',
+        'diamond': 'img/diamond.png',
+        'data-chart': 'img/data-chart.png',
+        'web6': 'img/web6.png',
+        'web0': 'img/web0.png',
+        'y-chart': 'img/y-chart.png',
+        'x-chart': 'img/x-chart.png',
+        'w-chart': 'img/w-chart.png',
+        'butterfly': 'img/butterfly.png',
+        'butterfly2': 'img/butterfly2.png',
+        'fishbone': 'img/fishbone.png',
+        'pmi': 'img/pmi.png',
+        'bear': 'img/bear.png',
+        'jellyfish': 'img/jellyfish.png',
+        'tree': 'img/tree.png',
+        'candy': 'img/candy.png',
+        'kwl': 'img/KWL.png',
+        'information-analysis-chart': 'img/information-analysis-chart.png',
+        'pyramid': 'img/pyramid.png',
+        'mountain': 'img/mountain.png',
+        'target': 'img/target.png',
+        'table': 'img/table.png'
+      };
+      
+      // 優先順位: 1. 画像設定パネルの画像 2. シンキングツールのURL画像 3. シンキングツールの画像テンプレート
+      // 縦横のサイズをフィールドに合わせる（100% 100%で伸縮）
+      // 縦横比は元の画像のまま、横幅だけフィールドに合わせる
+      var templateImg = null;
+      if (currentTemplate !== 'none') {
+        templateImg = templateImageMap[currentTemplate];
+        if (!templateImg && typeof currentTemplate === 'string') {
+          var key = Object.keys(templateImageMap).find(function(k) { return k.toLowerCase() === currentTemplate.toLowerCase(); });
+          if (key) templateImg = templateImageMap[key];
+        }
+      }
+      if (currentBgImage) {
+        workspaceBoard.style.backgroundImage = `url(${currentBgImage})`;
+        workspaceBoard.style.backgroundSize = '100% auto';
+        workspaceBoard.style.backgroundPosition = 'center';
+        workspaceBoard.style.backgroundRepeat = 'no-repeat';
+      } else if (templateImg) {
+        workspaceBoard.style.backgroundImage = 'url(' + templateImg + ')';
+        workspaceBoard.style.backgroundSize = '100% auto';
+        workspaceBoard.style.backgroundPosition = 'center';
+        workspaceBoard.style.backgroundRepeat = 'no-repeat';
+      } else {
+        workspaceBoard.style.backgroundImage = 'none';
+        workspaceBoard.style.backgroundSize = '';
+        workspaceBoard.style.backgroundRepeat = '';
+      }
+    }
+    
+    // キャンバスが空かどうかをチェック
+    function isCanvasEmpty(canvas) {
+      const context = canvas.getContext('2d');
+      const pixelBuffer = new Uint32Array(
+        context.getImageData(0, 0, canvas.width, canvas.height).data.buffer
+      );
+      return !pixelBuffer.some(color => color !== 0);
+    }
+    
+    function addDrawingCard() {
+      // キャンバスの内容を画像として取得
+      const imageData = canvas.toDataURL('image/png');
+      
+      // キャンバスが空かチェック
+      const emptyCanvas = isCanvasEmpty(canvas);
+      if (emptyCanvas) return;
+      
+      // カード作成
+      createCard(imageData, 'image', null, null, nextCardColor);
+      
+      // キャンバスをクリア
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    
+    function addTextCard() {
+      const textInput = document.getElementById('text-input');
+      const text = textInput.value.trim();
+      
+      if (!text) return;
+      
+      // カード作成
+      createCard(text, 'text', null, null, nextCardColor);
+      
+      // 入力欄をクリア
+      textInput.value = '';
+      
+      // 入力欄にフォーカスを戻す
+      textInput.focus();
+    }
+    
+    // A3上の付箋サイズ換算用（76mm基準・76/297でスケール）
+    const A3_SHORT_MM = 297;
+    const A3_LONG_MM = 420;
+    const STICKY_MM = 76;
+    
+    function getStickySidePx(boardW, boardH) {
+      const side = (STICKY_MM / A3_SHORT_MM) * Math.min(boardW, boardH);
+      return Math.max(40, Math.min(200, side));
+    }
+    
+    // テキストの行数と長さに基づいてカードサイズを計算（付箋スケール・76を1とする相対値）
+    function calculateCardSize(text) {
+      const lines = text.split('\n');
+      const lineCount = lines.length;
+      const maxLineLength = Math.max(...lines.map(line => line.length));
+      let w = 76;
+      let h = 38;
+      if (lineCount > 3) h = Math.min(100, 30 + lineCount * 8);
+      if (maxLineLength > 20) w = Math.min(140, 60 + maxLineLength * 0.4);
+      return { width: w, height: h };
+    }
+    
+    // 落下着地点を計算（一番下 or 重なったカードの上に積む）
+    function computeLandingTop(left, cardWidth, cardHeight, boardH, existingCards) {
+      const margin = 8;
+      let landingTop = Math.max(0, boardH - cardHeight - margin);
+      for (const other of existingCards) {
+        const oLeft = other.offsetLeft;
+        const oRight = other.offsetLeft + other.offsetWidth;
+        const ourRight = left + cardWidth;
+        if (ourRight <= oLeft || left >= oRight) continue;
+        const candidateTop = other.offsetTop - cardHeight;
+        if (candidateTop < landingTop) landingTop = Math.max(0, candidateTop);
+      }
+      return landingTop;
+    }
+    
+    function createCard(content, type, left = null, top = null, color = cardColors[0].color) {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.dataset.id = Date.now();
+      card.dataset.type = type;
+      card.dataset.color = color;
+      card.style.backgroundColor = color;
+      
+      const boardW = workspaceBoard.offsetWidth || refWorkspaceWidth;
+      const boardH = workspaceBoard.offsetHeight || refWorkspaceHeight;
+      
+      // A3を基準に付箋サイズ（76mm角）でカードサイズを算出・デフォルト倍率を適用
+      const baseStickyPx = getStickySidePx(boardW, boardH);
+      const stickyPx = Math.max(32, Math.min(400, Math.round(baseStickyPx * defaultStickyScale)));
+      const scale = stickyPx / STICKY_MM;
+      let cardWidth, cardHeight;
+      if (type === 'text') {
+        const size = calculateCardSize(content);
+        const w = Math.round(size.width * scale);
+        const h = Math.round(size.height * scale);
+        const side = Math.max(w, h, stickyPx);
+        cardWidth = cardHeight = side;
+      } else {
+        cardWidth = cardHeight = stickyPx;
+      }
+      card.style.width = cardWidth + 'px';
+      card.style.height = cardHeight + 'px';
+      
+      // 位置：横はランダム、縦は落下着地（一番下 or 重なったカードの上）
+      if (left === null) {
+        left = Math.random() * Math.max(20, boardW - cardWidth - 20);
+      }
+      const existingCards = Array.from(workspaceBoard.querySelectorAll('.card'));
+      top = computeLandingTop(left, cardWidth, cardHeight, boardH, existingCards);
+      
+      card.style.left = left + 'px';
+      card.style.setProperty('--final-top', top + 'px');
+      card.style.top = '-220px';
+      card.classList.add('card-drop-in');
+      
+      // コンテンツコンテナ
+      const contentDiv = document.createElement('div');
+      contentDiv.className = 'card-content';
+      
+      // コンテンツを表示
+      if (type === 'image') {
+        const img = document.createElement('img');
+        img.src = content;
+        img.style.width = '100%';
+        contentDiv.appendChild(img);
+      } else {
+        contentDiv.textContent = content;
+        contentDiv.style.whiteSpace = 'pre-wrap';
+        const sizeIndex = Math.max(0, Math.min(defaultTextSizeIndex, textSizes.length - 1));
+        contentDiv.classList.add(textSizes[sizeIndex].name);
+        card.dataset.textSizeIndex = String(sizeIndex);
+        contentDiv.contentEditable = 'true';
+        contentDiv.setAttribute('contenteditable', 'true');
+        contentDiv.addEventListener('blur', function saveCardContent() {
+          saveCurrentPageToState();
+        });
+      }
+      
+      card.appendChild(contentDiv);
+      
+      // 削除ボタン
+      const deleteBtn = document.createElement('div');
+      deleteBtn.className = 'delete-btn';
+      deleteBtn.innerHTML = '×';
+      addClickOrTouchListener(deleteBtn, (e) => {
+        e.stopPropagation();
+        deleteCard(card);
+      });
+      card.appendChild(deleteBtn);
+      
+      // リサイズハンドル（右下角をドラッグで付箋のサイズ変更・表示はしない）
+      const resizeHandle = document.createElement('div');
+      resizeHandle.className = 'resize-handle';
+      card.appendChild(resizeHandle);
+      
+      // カードコントロール（テキストサイズ変更と色変更）
+      const cardControls = document.createElement('div');
+      cardControls.className = 'card-controls';
+      
+      // テキストカードの場合はテキストサイズ変更ボタンを追加
+      if (type === 'text') {
+        // サイズ縮小ボタン
+        const decreaseBtn = document.createElement('div');
+        decreaseBtn.className = 'card-control-btn';
+        decreaseBtn.innerHTML = '−';
+        decreaseBtn.title = 'テキストを小さく';
+        addClickOrTouchListener(decreaseBtn, (e) => {
+          e.stopPropagation();
+          changeTextSize(card, -1);
+        });
+        cardControls.appendChild(decreaseBtn);
+        
+        // 標準サイズボタン
+        const resetBtn = document.createElement('div');
+        resetBtn.className = 'card-control-btn active';
+        resetBtn.innerHTML = '標準';
+        resetBtn.title = '標準サイズに戻す';
+        addClickOrTouchListener(resetBtn, (e) => {
+          e.stopPropagation();
+          resetTextSize(card);
+        });
+        cardControls.appendChild(resetBtn);
+        
+        // サイズ拡大ボタン
+        const increaseBtn = document.createElement('div');
+        increaseBtn.className = 'card-control-btn';
+        increaseBtn.innerHTML = '＋';
+        increaseBtn.title = 'テキストを大きく';
+        increaseBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          changeTextSize(card, 1);
+        });
+        cardControls.appendChild(increaseBtn);
+      }
+      
+      // 色変更ボタン（すべてのカードタイプに追加）
+      const colorPickerBtn = document.createElement('div');
+      colorPickerBtn.className = 'card-control-btn color-picker-btn';
+      colorPickerBtn.title = 'カードの色を変更';
+      
+      // 現在の色を表示するインジケーター
+      const colorIndicator = document.createElement('div');
+      colorIndicator.className = 'color-indicator';
+      colorIndicator.style.backgroundColor = color;
+      colorPickerBtn.appendChild(colorIndicator);
+      
+      // カラーピッカーパネル
+      const colorPickerPanel = document.createElement('div');
+      colorPickerPanel.className = 'color-picker-panel';
+      
+      // カラーグリッド
+      const colorGrid = document.createElement('div');
+      colorGrid.className = 'color-grid';
+      
+      // カラーオプションを追加
+      cardColors.forEach(colorOption => {
+        const colorBtn = document.createElement('div');
+        colorBtn.className = 'color-option-card';
+        colorBtn.style.backgroundColor = colorOption.color;
+        colorBtn.title = colorOption.name;
+        addClickOrTouchListener(colorBtn, (e) => {
+          e.stopPropagation();
+          changeCardColor(card, colorOption.color);
+          colorIndicator.style.backgroundColor = colorOption.color;
+          colorPickerPanel.classList.remove('active');
+        });
+        colorGrid.appendChild(colorBtn);
+      });
+      
+      colorPickerPanel.appendChild(colorGrid);
+      colorPickerBtn.appendChild(colorPickerPanel);
+      
+      // カラーピッカーの表示/非表示を切り替え
+      addClickOrTouchListener(colorPickerBtn, (e) => {
+        e.stopPropagation();
+        // 他のカラーピッカーを閉じる
+        document.querySelectorAll('.color-picker-panel.active').forEach(panel => {
+          if (panel !== colorPickerPanel) {
+            panel.classList.remove('active');
+          }
+        });
+        colorPickerPanel.classList.toggle('active');
+      });
+      
+      cardControls.appendChild(colorPickerBtn);
+      card.appendChild(cardControls);
+      
+      // カードのドラッグ／クリック（マウス）：ドラッグ＝移動、クリック＝接続
+      card.addEventListener('mousedown', startDragCard);
+      
+      // カードのドラッグ／クリック（タッチ）
+      card.addEventListener('touchstart', handleCardTouchStart, { passive: false });
+      
+      // リサイズ機能
+      resizeHandle.addEventListener('mousedown', startResizeCard);
+      resizeHandle.addEventListener('touchstart', startResizeCardTouch, { passive: false });
+      
+      workspaceBoard.appendChild(card);
+      cards.push(card);
+      saveCurrentPageToState();
+      
+      card.addEventListener('animationend', function onDropEnd(e) {
+        if (e.animationName !== 'card-drop-in-bounce') return;
+        card.removeEventListener('animationend', onDropEnd);
+        card.classList.remove('card-drop-in');
+        card.style.top = top + 'px';
+        // バウンドで横にずれた分を left に反映して、その座標で止める
+        var style = getComputedStyle(card);
+        var t = style.transform;
+        var dx = 0;
+        if (t && t !== 'none') {
+          var m = t.match(/matrix\(([^)]+)\)/);
+          if (m) {
+            var parts = m[1].split(',');
+            if (parts.length >= 6) dx = parseFloat(parts[4].trim()) || 0;
+          }
+        }
+        var currentLeft = parseInt(card.style.left, 10) || 0;
+        card.style.left = (currentLeft + dx) + 'px';
+        card.style.transform = '';
+        updateConnections();
+        saveCurrentPageToState();
+      });
+      
+      return card;
+    }
+    
+    // 現在のページをJSON用データにシリアライズ（別オブジェクトで返し参照が上書きされないようにする）
+    function getPageData() {
+      var cardEls = workspaceBoard.querySelectorAll('.card');
+      var cards = Array.from(cardEls).map(function(card) {
+        var contentDiv = card.querySelector('.card-content');
+        var img = contentDiv && contentDiv.querySelector('img');
+        var content = img ? img.src : (contentDiv ? (contentDiv.textContent || '') : '');
+        var top = parseInt(card.style.top, 10);
+        if (isNaN(top)) top = 0;
+        var finalTop = card.style.getPropertyValue('--final-top');
+        if (finalTop) top = parseInt(finalTop, 10) || top;
+        return {
+          id: String(card.dataset.id || ('c' + Date.now() + '-' + Math.random())),
+          type: (card.dataset.type || 'text'),
+          content: content,
+          left: parseInt(card.style.left, 10) || 0,
+          top: top,
+          width: card.offsetWidth || 80,
+          height: card.offsetHeight || 80,
+          color: (card.dataset.color || cardColors[0].color),
+          textSizeIndex: card.dataset.type === 'text' ? (card.dataset.textSizeIndex || '3') : undefined
+        };
+      });
+      const connData = connections.map(c => ({
+        fromId: String(c.from.dataset.id),
+        toId: String(c.to.dataset.id)
+      }));
+      return {
+        cards: cards.slice(),
+        connections: connData.slice(),
+        background: {
+          color: currentBgColor,
+          template: currentTemplate,
+          image: currentBgImage
+        }
+      };
+    }
+    
+    // JSONデータからカードを1つ復元（createCardと同様のDOM・イベント、アニメなし）
+    function createCardFromData(data) {
+      if (!data || typeof data !== 'object') return null;
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.dataset.id = String(data.id != null ? data.id : 'c' + Date.now() + '-' + Math.random());
+      card.dataset.type = data.type || 'text';
+      var cardColor = data.color || cardColors[0].color;
+      card.dataset.color = cardColor;
+      card.style.backgroundColor = cardColor;
+      card.style.width = (data.width || 80) + 'px';
+      card.style.height = (data.height || 80) + 'px';
+      card.style.left = (data.left || 0) + 'px';
+      card.style.top = (data.top || 0) + 'px';
+      
+      const contentDiv = document.createElement('div');
+      contentDiv.className = 'card-content';
+      if (data.type === 'image') {
+        const img = document.createElement('img');
+        img.src = data.content || '';
+        img.style.width = '100%';
+        contentDiv.appendChild(img);
+      } else {
+        contentDiv.textContent = data.content || '';
+        contentDiv.style.whiteSpace = 'pre-wrap';
+        const sizeIndex = Math.max(0, Math.min(textSizes.length - 1, parseInt(data.textSizeIndex, 10) || 2));
+        contentDiv.classList.add(textSizes[sizeIndex].name);
+        card.dataset.textSizeIndex = String(sizeIndex);
+        contentDiv.contentEditable = 'true';
+        contentDiv.setAttribute('contenteditable', 'true');
+        contentDiv.addEventListener('blur', function saveCardContent() {
+          saveCurrentPageToState();
+        });
+      }
+      card.appendChild(contentDiv);
+      
+      const deleteBtn = document.createElement('div');
+      deleteBtn.className = 'delete-btn';
+      deleteBtn.innerHTML = '×';
+      addClickOrTouchListener(deleteBtn, (e) => { e.stopPropagation(); deleteCard(card); });
+      card.appendChild(deleteBtn);
+      
+      const resizeHandle = document.createElement('div');
+      resizeHandle.className = 'resize-handle';
+      card.appendChild(resizeHandle);
+      
+      const cardControls = document.createElement('div');
+      cardControls.className = 'card-controls';
+      if (data.type === 'text') {
+        const decreaseBtn = document.createElement('div');
+        decreaseBtn.className = 'card-control-btn';
+        decreaseBtn.innerHTML = '−';
+        addClickOrTouchListener(decreaseBtn, (e) => { e.stopPropagation(); changeTextSize(card, -1); });
+        cardControls.appendChild(decreaseBtn);
+        const resetBtn = document.createElement('div');
+        resetBtn.className = 'card-control-btn active';
+        resetBtn.innerHTML = '標準';
+        addClickOrTouchListener(resetBtn, (e) => { e.stopPropagation(); resetTextSize(card); });
+        cardControls.appendChild(resetBtn);
+        const increaseBtn = document.createElement('div');
+        increaseBtn.className = 'card-control-btn';
+        increaseBtn.innerHTML = '＋';
+        increaseBtn.addEventListener('click', (e) => { e.stopPropagation(); changeTextSize(card, 1); });
+        cardControls.appendChild(increaseBtn);
+      }
+      const colorPickerBtn = document.createElement('div');
+      colorPickerBtn.className = 'card-control-btn color-picker-btn';
+      const colorIndicator = document.createElement('div');
+      colorIndicator.className = 'color-indicator';
+      colorIndicator.style.backgroundColor = cardColor;
+      colorPickerBtn.appendChild(colorIndicator);
+      const colorPickerPanel = document.createElement('div');
+      colorPickerPanel.className = 'color-picker-panel';
+      const colorGrid = document.createElement('div');
+      colorGrid.className = 'color-grid';
+      cardColors.forEach(colorOption => {
+        const colorBtn = document.createElement('div');
+        colorBtn.className = 'color-option-card';
+        colorBtn.style.backgroundColor = colorOption.color;
+        addClickOrTouchListener(colorBtn, (e) => {
+          e.stopPropagation();
+          changeCardColor(card, colorOption.color);
+          colorIndicator.style.backgroundColor = colorOption.color;
+          colorPickerPanel.classList.remove('active');
+        });
+        colorGrid.appendChild(colorBtn);
+      });
+      colorPickerPanel.appendChild(colorGrid);
+      colorPickerBtn.appendChild(colorPickerPanel);
+      addClickOrTouchListener(colorPickerBtn, (e) => {
+        e.stopPropagation();
+        document.querySelectorAll('.color-picker-panel.active').forEach(panel => {
+          if (panel !== colorPickerPanel) panel.classList.remove('active');
+        });
+        colorPickerPanel.classList.toggle('active');
+      });
+      cardControls.appendChild(colorPickerBtn);
+      card.appendChild(cardControls);
+      
+      card.addEventListener('mousedown', startDragCard);
+      card.addEventListener('touchstart', handleCardTouchStart, { passive: false });
+      resizeHandle.addEventListener('mousedown', startResizeCard);
+      resizeHandle.addEventListener('touchstart', startResizeCardTouch, { passive: false });
+      
+      workspaceBoard.appendChild(card);
+      cards.push(card);
+      return card;
+    }
+    
+    // JSONデータからページを復元
+    function loadPageData(data) {
+      var ghost = document.getElementById('workspace-ghost');
+      if (ghost) { ghost.style.display = 'none'; ghost.style.backgroundImage = ''; }
+      if (workspace && workspace.style) workspace.style.transform = 'scale(' + currentZoom + ')';
+      if (!data || typeof data !== 'object') data = { cards: [], connections: [], background: {} };
+      var cardsData = Array.isArray(data.cards) ? data.cards : [];
+      var connsData = Array.isArray(data.connections) ? data.connections : [];
+      // 最初に背景だけ復元（後続のDOM操作より先に適用する）
+      var bg = (data.background && typeof data.background === 'object') ? data.background : {};
+      currentBgColor = (bg.color != null && String(bg.color).trim() !== '') ? String(bg.color).trim() : '#ffffff';
+      var rawTemplate = (bg.template != null && bg.template !== '') ? String(bg.template).trim() : 'none';
+      currentTemplate = (rawTemplate === '') ? 'none' : rawTemplate;
+      currentBgImage = (bg.image != null && bg.image !== '') ? bg.image : null;
+      updateWorkspaceBackground();
+      _loadingPage = true;
+      try {
+      connections.forEach(c => c.line.remove());
+      connections = [];
+      workspaceBoard.querySelectorAll('.card').forEach(el => el.remove());
+      cards = [];
+      selectedCard = null;
+      connectingCard = null;
+      workspace.classList.remove('connecting-from');
+      // 背景色タブの選択状態を更新
+      document.querySelectorAll('.color-option.active').forEach(el => el.classList.remove('active'));
+      var colorEl = document.querySelector('.color-option[data-color="' + currentBgColor + '"]');
+      if (colorEl) colorEl.classList.add('active');
+      // シンキングツール（テンプレート）の選択状態を更新
+      document.querySelectorAll('.template-option.active').forEach(el => el.classList.remove('active'));
+      var templateEl = document.querySelector('.template-option[data-template="' + currentTemplate + '"]');
+      if (templateEl) templateEl.classList.add('active');
+      // 画像設定パネル：読み込んだ背景画像があればプレビュー表示、なければ非表示
+      var previewPanel = document.getElementById('bg-image-preview');
+      var thumb = document.getElementById('preview-thumbnail');
+      var fileInput = document.getElementById('bg-image-upload');
+      if (currentBgImage) {
+        if (previewPanel) previewPanel.classList.remove('hidden');
+        if (thumb) thumb.style.backgroundImage = 'url(' + currentBgImage + ')';
+        if (fileInput) fileInput.value = '';
+      } else {
+        if (previewPanel) previewPanel.classList.add('hidden');
+        if (thumb) thumb.style.backgroundImage = '';
+        if (fileInput) fileInput.value = '';
+      }
+      if (typeof updateThinkingToolTriggerDisplay === 'function') updateThinkingToolTriggerDisplay();
+      
+      var idToCard = {};
+      cardsData.forEach(function(cardData) {
+        try {
+          var card = createCardFromData(cardData);
+          if (card) idToCard[card.dataset.id] = card;
+        } catch (e) { console.warn('createCardFromData', e); }
+      });
+      connsData.forEach(function(conn) {
+        var fromCard = idToCard[String(conn.fromId)];
+        var toCard = idToCard[String(conn.toId)];
+        if (fromCard && toCard) createConnection(fromCard, toCard);
+      });
+      updateModeText();
+      updateWorkspaceBackground();
+      requestAnimationFrame(function() { updateWorkspaceBackground(); });
+      setTimeout(function() { updateWorkspaceBackground(); }, 0);
+      } finally { _loadingPage = false; }
+    }
+    
+    var _loadingPage = false;
+    function clonePageData(raw) {
+      if (!raw) return { cards: [], connections: [], background: { color: '#ffffff', template: 'none', image: null } };
+      var bg = (raw.background && typeof raw.background === 'object') ? raw.background : {};
+      var c = {
+        cards: (raw.cards || []).map(function(x) { return { id: x.id, type: x.type, content: x.content, left: x.left, top: x.top, width: x.width, height: x.height, color: x.color, textSizeIndex: x.textSizeIndex }; }),
+        connections: (raw.connections || []).map(function(r) { return { fromId: r.fromId, toId: r.toId }; }),
+        background: {
+          color: (bg.color != null && String(bg.color).trim() !== '') ? String(bg.color).trim() : '#ffffff',
+          template: (bg.template != null && String(bg.template).trim() !== '') ? String(bg.template).trim() : 'none',
+          image: (bg.image != null && bg.image !== '') ? bg.image : null
+        }
+      };
+      return c;
+    }
+    function saveCurrentPageToState() {
+      if (_loadingPage) return;
+      pageStates[currentPageIndex] = clonePageData(getPageData());
+    }
+    
+    function updatePageUI() {
+      var prevBtn = document.getElementById('page-prev');
+      var nextBtn = document.getElementById('page-next');
+      var infoEl = document.getElementById('page-info');
+      if (prevBtn) prevBtn.classList.toggle('btn-page-inactive', currentPageIndex <= 0);
+      if (nextBtn) nextBtn.classList.toggle('btn-page-inactive', currentPageIndex >= TOTAL_SLIDES - 1);
+      if (infoEl) infoEl.textContent = (currentPageIndex + 1) + ' / ' + TOTAL_SLIDES;
+    }
+    
+    function runSlideAnimation(direction, thenLoad) {
+      let done = false;
+      const applySwitch = () => {
+        if (done) return;
+        done = true;
+        thenLoad();
+        updatePageUI();
+      };
+      const ghost = document.getElementById('workspace-ghost');
+      if (!ghost) { applySwitch(); return; }
+      const zoom = currentZoom;
+      const baseTransform = `scale(${zoom})`;
+      function setWorkspaceTransform(xPercent) {
+        workspace.style.transform = `scale(${zoom}) translateX(${xPercent}%)`;
+      }
+      const doSwitch = () => {
+        applySwitch();
+        if (direction === 'next') {
+          setWorkspaceTransform(100);
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => setWorkspaceTransform(0));
+          });
+        } else {
+          setWorkspaceTransform(-100);
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => setWorkspaceTransform(0));
+          });
+        }
+        setTimeout(() => {
+          ghost.style.display = 'none';
+          ghost.style.backgroundImage = '';
+          workspace.style.transform = baseTransform;
+          updatePageUI();
+        }, 380);
+      };
+      const fallbackTimer = setTimeout(() => {
+        if (done) return;
+        applySwitch();
+      }, 1500);
+      captureWorkspaceAsCanvas().then(canvas => {
+        clearTimeout(fallbackTimer);
+        if (done) return;
+        const dataUrl = canvas.toDataURL('image/png');
+        ghost.style.backgroundImage = `url(${dataUrl})`;
+        ghost.style.display = 'block';
+        doSwitch();
+      }).catch(() => {
+        clearTimeout(fallbackTimer);
+        applySwitch();
+      });
+    }
+    
+    function goToPrevPage() {
+      if (currentPageIndex <= 0) return;
+      saveCurrentPageToState();
+      var prevIndex = currentPageIndex - 1;
+      runSlideAnimation('prev', function() {
+        currentPageIndex = prevIndex;
+        loadPageData(pageStates[prevIndex]);
+      });
+    }
+    
+    function goToNextPage() {
+      if (currentPageIndex >= TOTAL_SLIDES - 1) return;
+      saveCurrentPageToState();
+      var nextIndex = currentPageIndex + 1;
+      runSlideAnimation('next', function() {
+        currentPageIndex = nextIndex;
+        loadPageData(pageStates[nextIndex]);
+      });
+    }
+    
+    function setupPageNav() {
+      var prevBtn = document.getElementById('page-prev');
+      var nextBtn = document.getElementById('page-next');
+      if (prevBtn) {
+        addClickOrTouchListener(prevBtn, function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          goToPrevPage();
+        });
+      }
+      if (nextBtn) {
+        addClickOrTouchListener(nextBtn, function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          goToNextPage();
+        });
+      }
+    }
+    function initPages() {
+      setupPageNav();
+      loadPageData(pageStates[currentPageIndex]);
+      updatePageUI();
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initPages);
+    } else {
+      initPages();
+    }
+    
+    function exportJSON(scope) {
+      if (scope !== 'current' && scope !== 'all') scope = 'current';
+      saveCurrentPageToState();
+      var pagesToSave = scope === 'current'
+        ? [clonePageData(getPageData())]
+        : pageStates.slice();
+      const data = { version: 1, pages: pagesToSave };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'cardmap-' + (new Date().toISOString().slice(0, 19).replace(/:/g, '-')) + '.json';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+    var saveChoiceModal = document.getElementById('save-choice-modal');
+    function openSaveChoiceModal() {
+      if (saveChoiceModal) {
+        saveChoiceModal.classList.add('open');
+        saveChoiceModal.setAttribute('aria-hidden', 'false');
+      }
+    }
+    function closeSaveChoiceModal() {
+      if (saveChoiceModal) {
+        saveChoiceModal.classList.remove('open');
+        saveChoiceModal.setAttribute('aria-hidden', 'true');
+      }
+    }
+    
+    var pendingImportMode = null; // 'append' | 'replace' | null
+    function importJSON(file, mode) {
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          var data = JSON.parse(e.target.result);
+          if (mode === 'append') {
+            saveCurrentPageToState();
+            var pageCount = (data.pages && Array.isArray(data.pages)) ? data.pages.length : 0;
+            var onePage = (pageCount > 0)
+              ? data.pages[0]
+              : (data.cards || data.connections ? data : null);
+            if (!onePage || (!onePage.cards && !onePage.connections)) {
+              alert('読み込むデータがありません。');
+              return;
+            }
+            normalizePageBackground(onePage);
+            var currentPage = clonePageData(pageStates[currentPageIndex]);
+            var loadedPage = clonePageData(onePage);
+            var idMap = {};
+            (loadedPage.cards || []).forEach(function(c, i) {
+              var newId = 'c' + Date.now() + '-' + i;
+              idMap[String(c.id)] = newId;
+              c.id = newId;
+            });
+            (loadedPage.connections || []).forEach(function(conn) {
+              conn.fromId = idMap[String(conn.fromId)] || conn.fromId;
+              conn.toId = idMap[String(conn.toId)] || conn.toId;
+            });
+            currentPage.cards = (currentPage.cards || []).concat(loadedPage.cards || []);
+            currentPage.connections = (currentPage.connections || []).concat(loadedPage.connections || []);
+            currentPage.background = {
+              color: (loadedPage.background.color != null && String(loadedPage.background.color).trim() !== '') ? String(loadedPage.background.color).trim() : '#ffffff',
+              template: (loadedPage.background.template != null && String(loadedPage.background.template).trim() !== '') ? String(loadedPage.background.template).trim() : 'none',
+              image: (loadedPage.background.image != null && loadedPage.background.image !== '') ? loadedPage.background.image : null
+            };
+            pageStates[currentPageIndex] = currentPage;
+            loadPageData(currentPage);
+            updatePageUI();
+            if (pageCount > 1) {
+              alert(pageCount + '枚のデータのうち、1枚目を現在のページに追加しました。');
+            }
+            return;
+          }
+          if (data.pages && Array.isArray(data.pages)) {
+            pageStates = [];
+            for (var i = 0; i < TOTAL_SLIDES; i++) {
+              var page = i < data.pages.length ? data.pages[i] : createEmptyPage();
+              pageStates.push(normalizePageBackground(page));
+            }
+          } else if (data.cards || data.connections) {
+            pageStates = [normalizePageBackground(data)];
+            for (var j = 1; j < TOTAL_SLIDES; j++) pageStates.push(createEmptyPage());
+          } else {
+            alert('JSONの形式が正しくありません。');
+            return;
+          }
+          currentPageIndex = 0;
+          loadPageData(pageStates[0]);
+          updatePageUI();
+        } catch (err) {
+          alert('JSONの読み込みに失敗しました: ' + err.message);
+        }
+      };
+      reader.readAsText(file);
+    }
+    var loadChoiceModal = document.getElementById('load-choice-modal');
+    function openLoadChoiceModal() {
+      if (loadChoiceModal) {
+        loadChoiceModal.classList.add('open');
+        loadChoiceModal.setAttribute('aria-hidden', 'false');
+      }
+    }
+    function closeLoadChoiceModal() {
+      if (loadChoiceModal) {
+        loadChoiceModal.classList.remove('open');
+        loadChoiceModal.setAttribute('aria-hidden', 'true');
+      }
+    }
+    
+    addClickOrTouchListener(document.getElementById('json-save'), openSaveChoiceModal);
+    addClickOrTouchListener(document.getElementById('save-choice-current'), function() {
+      exportJSON('current');
+      closeSaveChoiceModal();
+    });
+    addClickOrTouchListener(document.getElementById('save-choice-all'), function() {
+      exportJSON('all');
+      closeSaveChoiceModal();
+    });
+    addClickOrTouchListener(document.getElementById('save-choice-cancel'), closeSaveChoiceModal);
+    if (saveChoiceModal) {
+      saveChoiceModal.addEventListener('click', function(e) {
+        if (e.target === saveChoiceModal) closeSaveChoiceModal();
+      });
+    }
+    addClickOrTouchListener(document.getElementById('json-load'), openLoadChoiceModal);
+    addClickOrTouchListener(document.getElementById('load-choice-append'), function() {
+      pendingImportMode = 'append';
+      closeLoadChoiceModal();
+      document.getElementById('json-file-input').click();
+    });
+    addClickOrTouchListener(document.getElementById('load-choice-replace'), function() {
+      pendingImportMode = 'replace';
+      closeLoadChoiceModal();
+      document.getElementById('json-file-input').click();
+    });
+    addClickOrTouchListener(document.getElementById('load-choice-cancel'), closeLoadChoiceModal);
+    if (loadChoiceModal) {
+      loadChoiceModal.addEventListener('click', function(e) {
+        if (e.target === loadChoiceModal) closeLoadChoiceModal();
+      });
+    }
+    document.getElementById('json-file-input').addEventListener('change', function(e) {
+      var file = e.target.files[0];
+      if (file) importJSON(file, pendingImportMode);
+      pendingImportMode = null;
+      e.target.value = '';
+    });
+    
+    // カードの色を変更
+    function changeCardColor(card, color) {
+      card.style.backgroundColor = color;
+      card.dataset.color = color;
+    }
+    
+    // テキストサイズの変更
+    function changeTextSize(card, direction) {
+      if (card.dataset.type !== 'text') return;
+      
+      const contentDiv = card.querySelector('.card-content');
+      let currentSizeIndex = parseInt(card.dataset.textSizeIndex);
+      
+      // サイズインデックスを更新
+      currentSizeIndex = Math.max(0, Math.min(textSizes.length - 1, currentSizeIndex + direction));
+      card.dataset.textSizeIndex = currentSizeIndex;
+      
+      // 現在のサイズクラスをすべて削除
+      textSizes.forEach(size => {
+        contentDiv.classList.remove(size.name);
+      });
+      
+      // 新しいサイズクラスを追加
+      contentDiv.classList.add(textSizes[currentSizeIndex].name);
+      
+      // ボタンの状態を更新
+      updateTextSizeButtons(card);
+      if (card.dataset.defaultPreview === '1') defaultTextSizeIndex = currentSizeIndex;
+    }
+    
+    // テキストサイズをリセット
+    function resetTextSize(card) {
+      if (card.dataset.type !== 'text') return;
+      
+      const contentDiv = card.querySelector('.card-content');
+      
+      // 現在のサイズクラスをすべて削除
+      textSizes.forEach(size => {
+        contentDiv.classList.remove(size.name);
+      });
+      
+      // 標準サイズを設定
+      card.dataset.textSizeIndex = '2';
+      contentDiv.classList.add('text-md');
+      
+      // ボタンの状態を更新
+      updateTextSizeButtons(card);
+      if (card.dataset.defaultPreview === '1') defaultTextSizeIndex = 2;
+    }
+    
+    // テキストサイズボタンの状態を更新
+    function updateTextSizeButtons(card) {
+      const buttons = card.querySelectorAll('.card-control-btn:not(.color-picker-btn)');
+      const currentSizeIndex = parseInt(card.dataset.textSizeIndex);
+      
+      buttons.forEach((btn, index) => {
+        if (index === 1) { // 標準サイズボタン
+          btn.classList.toggle('active', currentSizeIndex === 2);
+        }
+      });
+    }
+    
+    // カードの削除
+    function deleteCard(card) {
+      // カードに接続されているコネクションを削除
+      connections = connections.filter(conn => {
+        if (conn.from === card || conn.to === card) {
+          conn.line.remove();
+          return false;
+        }
+        return true;
+      });
+      
+      // カードを配列から削除
+      const index = cards.indexOf(card);
+      if (index !== -1) {
+        cards.splice(index, 1);
+      }
+      
+      // 選択状態をクリア
+      if (selectedCard === card) {
+        selectedCard = null;
+      }
+      
+      // DOM要素を削除
+      card.remove();
+      saveCurrentPageToState();
+    }
+    
+    // カードのドラッグ開始（マウス）：移動したらドラッグ、しなければクリック＝接続
+    const DRAG_THRESHOLD = 5;
+    
+    // 指定した画面座標にキャレットを合わせる（テキスト編集時のクリック位置）
+    function setCaretAtPoint(container, clientX, clientY) {
+      var range = null;
+      if (document.caretRangeFromPoint) {
+        range = document.caretRangeFromPoint(clientX, clientY);
+      } else if (document.caretPositionFromPoint) {
+        var pos = document.caretPositionFromPoint(clientX, clientY);
+        if (pos && pos.offsetNode) {
+          range = document.createRange();
+          range.setStart(pos.offsetNode, pos.offset);
+          range.collapse(true);
+        }
+      }
+      if (range && container.contains(range.startContainer)) {
+        var sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    }
+    
+    function startDragCard(e) {
+      // 右クリックは無視
+      if (e.button === 2) return;
+      
+      // リサイズハンドルやコントロールボタンのクリックは無視
+      if (e.target.classList.contains('resize-handle') || 
+          e.target.classList.contains('card-control-btn') ||
+          e.target.classList.contains('color-indicator') ||
+          e.target.closest('.color-picker-panel')) {
+        return;
+      }
+      
+      e.preventDefault();
+      
+      const card = this;
+      const startTarget = e.target;
+      const startX = e.clientX;
+      const startY = e.clientY;
+      let hasMoved = false;
+      
+      const rect = card.getBoundingClientRect();
+      const workspaceRect = workspace.getBoundingClientRect();
+      const offsetX = (e.clientX - rect.left) / currentBoardScaleX;
+      const offsetY = (e.clientY - rect.top) / currentBoardScaleY;
+      
+      function moveCard(e) {
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        if (!hasMoved && (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD)) {
+          hasMoved = true;
+          selectCard(card, e);
+          card.classList.add('dragging');
+          if (card.classList.contains('card-drop-in')) {
+            card.classList.remove('card-drop-in');
+            var curTop = parseInt(getComputedStyle(card).top, 10);
+            if (!isNaN(curTop)) card.style.top = curTop + 'px';
+            var transformStr = getComputedStyle(card).transform;
+            if (transformStr && transformStr !== 'none') {
+              var matrixMatch = transformStr.match(/matrix\(([^)]+)\)/);
+              if (matrixMatch) {
+                var parts = matrixMatch[1].split(',');
+                if (parts.length >= 6) {
+                  var translateX = parseFloat(parts[4].trim()) || 0;
+                  var curLeft = parseInt(card.style.left, 10) || 0;
+                  card.style.left = (curLeft + translateX) + 'px';
+                  card.style.transform = '';
+                }
+              }
+            }
+          }
+        }
+        if (!hasMoved) return;
+        const x = (e.clientX - workspaceRect.left) / currentZoom / currentBoardScaleX - offsetX;
+        const y = (e.clientY - workspaceRect.top) / currentZoom / currentBoardScaleY - offsetY;
+        const maxX = workspaceBoard.offsetWidth - card.offsetWidth;
+        const maxY = workspaceBoard.offsetHeight - card.offsetHeight;
+        card.style.left = Math.max(0, Math.min(maxX, x)) + 'px';
+        card.style.top = Math.max(0, Math.min(maxY, y)) + 'px';
+        updateConnections();
+      }
+      
+      function stopDrag() {
+        document.removeEventListener('mousemove', moveCard);
+        document.removeEventListener('mouseup', stopDrag);
+        card.classList.remove('dragging');
+        if (!hasMoved) {
+          handleCardSelect(card);
+          if (card.dataset.type === 'text' && startTarget.closest && startTarget.closest('.card-content') && !connectingCard) {
+            var contentEl = card.querySelector('.card-content');
+            if (contentEl) {
+              contentEl.focus();
+              setCaretAtPoint(contentEl, startX, startY);
+            }
+          }
+        } else {
+          selectCard(card, e);
+          saveCurrentPageToState();
+        }
+      }
+      
+      document.addEventListener('mousemove', moveCard);
+      document.addEventListener('mouseup', stopDrag);
+    }
+    
+    // カードのタッチ開始（ドラッグ＝移動、クリック＝接続）
+    function handleCardTouchStart(e) {
+      if (e.target.classList.contains('resize-handle') || 
+          e.target.classList.contains('card-control-btn') ||
+          e.target.classList.contains('color-indicator') ||
+          e.target.closest('.color-picker-panel')) {
+        return;
+      }
+      
+      e.preventDefault();
+      
+      const card = this;
+      const startTarget = e.target;
+      const touch = e.touches[0];
+      const startX = touch.clientX;
+      const startY = touch.clientY;
+      let hasMoved = false;
+      
+      const rect = card.getBoundingClientRect();
+      const workspaceRect = workspace.getBoundingClientRect();
+      const offsetX = (touch.clientX - rect.left) / currentBoardScaleX;
+      const offsetY = (touch.clientY - rect.top) / currentBoardScaleY;
+      
+      function moveCard(e) {
+        const t = e.touches[0];
+        const dx = t.clientX - startX;
+        const dy = t.clientY - startY;
+        if (!hasMoved && (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD)) {
+          hasMoved = true;
+          selectCard(card, e);
+          card.classList.add('dragging');
+          if (card.classList.contains('card-drop-in')) {
+            card.classList.remove('card-drop-in');
+            var curTop = parseInt(getComputedStyle(card).top, 10);
+            if (!isNaN(curTop)) card.style.top = curTop + 'px';
+            var transformStr = getComputedStyle(card).transform;
+            if (transformStr && transformStr !== 'none') {
+              var matrixMatch = transformStr.match(/matrix\(([^)]+)\)/);
+              if (matrixMatch) {
+                var parts = matrixMatch[1].split(',');
+                if (parts.length >= 6) {
+                  var translateX = parseFloat(parts[4].trim()) || 0;
+                  var curLeft = parseInt(card.style.left, 10) || 0;
+                  card.style.left = (curLeft + translateX) + 'px';
+                  card.style.transform = '';
+                }
+              }
+            }
+          }
+        }
+        if (!hasMoved) return;
+        const x = (t.clientX - workspaceRect.left) / currentZoom / currentBoardScaleX - offsetX;
+        const y = (t.clientY - workspaceRect.top) / currentZoom / currentBoardScaleY - offsetY;
+        const maxX = workspaceBoard.offsetWidth - card.offsetWidth;
+        const maxY = workspaceBoard.offsetHeight - card.offsetHeight;
+        card.style.left = Math.max(0, Math.min(maxX, x)) + 'px';
+        card.style.top = Math.max(0, Math.min(maxY, y)) + 'px';
+        updateConnections();
+      }
+      
+      function stopDrag(e) {
+        document.removeEventListener('touchmove', moveCard);
+        document.removeEventListener('touchend', stopDrag);
+        card.classList.remove('dragging');
+        if (!hasMoved) {
+          handleCardSelect(card);
+          if (card.dataset.type === 'text' && startTarget.closest && startTarget.closest('.card-content') && !connectingCard) {
+            var contentEl = card.querySelector('.card-content');
+            if (contentEl) {
+              contentEl.focus();
+              setCaretAtPoint(contentEl, startX, startY);
+            }
+          }
+        } else {
+          selectCard(card, e);
+          saveCurrentPageToState();
+        }
+      }
+      
+      document.addEventListener('touchmove', moveCard, { passive: false });
+      document.addEventListener('touchend', stopDrag);
+    }
+    
+    // カードのリサイズ開始（マウス）
+    function startResizeCard(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      const card = this.parentElement;
+      const startWidth = card.offsetWidth;
+      const startHeight = card.offsetHeight;
+      const startX = e.clientX;
+      const startY = e.clientY;
+      
+      function resize(e) {
+        const width = startWidth + (e.clientX - startX) / currentZoom / currentBoardScaleX;
+        const height = startHeight + (e.clientY - startY) / currentZoom / currentBoardScaleY;
+        card.style.width = Math.max(40, width) + 'px';
+        card.style.height = Math.max(40, height) + 'px';
+        updateConnections();
+      }
+      
+      function stopResize() {
+        document.removeEventListener('mousemove', resize);
+        document.removeEventListener('mouseup', stopResize);
+        saveCurrentPageToState();
+      }
+      
+      document.addEventListener('mousemove', resize);
+      document.addEventListener('mouseup', stopResize);
+    }
+    
+    // カードのリサイズ開始（タッチ）
+    function startResizeCardTouch(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      const card = this.parentElement;
+      const startWidth = card.offsetWidth;
+      const startHeight = card.offsetHeight;
+      const touch = e.touches[0];
+      const startX = touch.clientX;
+      const startY = touch.clientY;
+      
+      function resize(e) {
+        const touch = e.touches[0];
+        const width = startWidth + (touch.clientX - startX) / currentZoom / currentBoardScaleX;
+        const height = startHeight + (touch.clientY - startY) / currentZoom / currentBoardScaleY;
+        card.style.width = Math.max(40, width) + 'px';
+        card.style.height = Math.max(40, height) + 'px';
+        
+        // 接続線を更新
+        updateConnections();
+      }
+      
+      function stopResize() {
+        document.removeEventListener('touchmove', resize);
+        document.removeEventListener('touchend', stopResize);
+        saveCurrentPageToState();
+      }
+      
+      document.addEventListener('touchmove', resize, { passive: false });
+      document.addEventListener('touchend', stopResize);
+    }
+    
+    // カードの選択
+    function selectCard(card, e) {
+      // 前の選択を解除
+      if (selectedCard && selectedCard !== card) {
+        selectedCard.classList.remove('selected');
+      }
+      
+      // 新しいカードを選択
+      selectedCard = card;
+      card.classList.add('selected');
+    }
+    
+    // 選択解除（接続中のキャンセルも含む）
+    function clearSelection() {
+      if (selectedCard) {
+        selectedCard.classList.remove('selected');
+        selectedCard = null;
+      }
+      if (connectingCard) {
+        connectingCard.classList.remove('connecting');
+        connectingCard = null;
+        workspace.classList.remove('connecting-from');
+        updateModeText();
+      }
+    }
+    
+    // ワークスペースのクリックイベント - 選択解除・接続キャンセル（空き領域クリック時）
+    function isWorkspaceEmptyArea(target) {
+      return target === workspace || target === workspaceBoard;
+    }
+    
+    workspace.addEventListener('mousedown', (e) => {
+      if (!isWorkspaceEmptyArea(e.target)) return;
+      clearSelection();
+      document.querySelectorAll('.color-picker-panel.active').forEach(panel => {
+        panel.classList.remove('active');
+      });
+    });
+    
+    workspace.addEventListener('touchstart', (e) => {
+      if (!isWorkspaceEmptyArea(e.target)) return;
+      clearSelection();
+      document.querySelectorAll('.color-picker-panel.active').forEach(panel => {
+        panel.classList.remove('active');
+      });
+    });
+    
+    // クリックで接続：1つ目で接続元に、2つ目で線を引く
+    function handleCardSelect(card) {
+      if (!connectingCard) {
+        connectingCard = card;
+        card.classList.add('connecting');
+        workspace.classList.add('connecting-from');
+        selectCard(card, {});
+      } else if (connectingCard !== card) {
+        createConnection(connectingCard, card);
+        connectingCard.classList.remove('connecting');
+        connectingCard = null;
+        workspace.classList.remove('connecting-from');
+        selectCard(card, {});
+      } else {
+        connectingCard.classList.remove('connecting');
+        connectingCard = null;
+        workspace.classList.remove('connecting-from');
+      }
+      updateModeText();
+    }
+    
+    // 接続線を削除
+    function deleteConnection(connection) {
+      connection.line.remove();
+      connections = connections.filter(c => c !== connection);
+      saveCurrentPageToState();
+    }
+    
+    // カード間の接続を作成
+    function createConnection(fromCard, toCard) {
+      const line = document.createElement('div');
+      line.className = 'connection-line';
+      workspaceBoard.appendChild(line);
+      
+      const connection = {
+        from: fromCard,
+        to: toCard,
+        line: line
+      };
+      
+      connections.push(connection);
+      updateConnectionLine(connection);
+      saveCurrentPageToState();
+      
+      // クリックで接続線を削除
+      addClickOrTouchListener(line, (e) => {
+        e.stopPropagation();
+        deleteConnection(connection);
+      });
+    }
+    
+    // すべての接続線を更新
+    function updateConnections() {
+      connections.forEach(updateConnectionLine);
+    }
+    
+    // 接続線の位置を更新（ボード座標で計算）
+    function updateConnectionLine(connection) {
+      const fromX = connection.from.offsetLeft + connection.from.offsetWidth / 2;
+      const fromY = connection.from.offsetTop + connection.from.offsetHeight / 2;
+      const toX = connection.to.offsetLeft + connection.to.offsetWidth / 2;
+      const toY = connection.to.offsetTop + connection.to.offsetHeight / 2;
+      const dx = toX - fromX;
+      const dy = toY - fromY;
+      const length = Math.sqrt(dx * dx + dy * dy);
+      const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+      connection.line.style.width = length + 'px';
+      connection.line.style.left = fromX + 'px';
+      connection.line.style.top = fromY + 'px';
+      connection.line.style.transform = `rotate(${angle}deg)`;
+    }
+    
+    // 初期表示
+    updateModeText();
+    
+    // キーボードイベント
+    document.addEventListener('keydown', (e) => {
+      if (!selectedCard) return;
+      
+      const step = e.shiftKey ? 10 : 1; // Shiftキーを押している場合は大きく移動
+      let left = parseInt(selectedCard.style.left);
+      let top = parseInt(selectedCard.style.top);
+      
+      switch (e.key) {
+        case 'ArrowLeft':
+          left = Math.max(0, left - step);
+          break;
+        case 'ArrowRight':
+          left = Math.min(workspaceBoard.offsetWidth - selectedCard.offsetWidth, left + step);
+          break;
+        case 'ArrowUp':
+          top = Math.max(0, top - step);
+          break;
+        case 'ArrowDown':
+          top = Math.min(workspaceBoard.offsetHeight - selectedCard.offsetHeight, top + step);
+          break;
+        case 'Delete':
+          deleteCard(selectedCard);
+          return;
+        default:
+          return;
+      }
+      
+      selectedCard.style.left = left + 'px';
+      selectedCard.style.top = top + 'px';
+      
+      // 接続線を更新
+      updateConnections();
+      saveCurrentPageToState();
+      
+      // イベントのデフォルト動作を防止（ページのスクロールなど）
+      e.preventDefault();
+    });
+    
+    // ドキュメント全体のクリックイベント - カラーピッカーを閉じる
+    document.addEventListener('click', (e) => {
+      // カラーピッカーボタンまたはパネル内のクリックは無視
+      if (e.target.closest('.color-picker-btn') || e.target.closest('.color-picker-panel')) {
+        return;
+      }
+      
+      // すべてのカラーピッカーを閉じる
+      document.querySelectorAll('.color-picker-panel.active').forEach(panel => {
+        panel.classList.remove('active');
+      });
+    });
+  </script>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'9cb43f77a4c18323',t:'MTc3MDY0OTM0OC4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>
